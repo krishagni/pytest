@@ -1,0 +1,9 @@
+[
+  "Participant_TC.py::test_participant[TC_001]",
+  "Participant_TC.py::test_participant[TC_002]",
+  "Participant_TC.py::test_participant[TC_003]",
+  "Participant_TC.py::test_participant[TC_004]",
+  "Participant_TC.py::test_participant[TC_005]",
+  "Participant_TC.py::test_participant[TC_006]",
+  "Participant_TC.py::test_read_google_sheet_data"
+]
