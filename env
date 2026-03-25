@@ -1,0 +1,47 @@
+# ─── OpenSpecimen Base URL ────────────────────────────────────────────────────
+OS_BASE_URL=https://test.openspecimen.org/rest/ng
+
+# ─── Role Credentials ─────────────────────────────────────────────────────────
+
+# ADMIN
+ROLE_ADMIN_USERNAME=**********
+ROLE_ADMIN_LOGIN_NAME=*************
+ROLE_ADMIN_PASSWORD=************
+ROLE_ADMIN_DOMAIN=KSPL-LDAP
+ROLE_ADMIN_DOMAIN_NAME=KSPL-LDAP
+
+# COORDINATOR
+ROLE_COORDINATOR_USERNAME=daren
+ROLE_COORDINATOR_LOGIN_NAME=daren
+ROLE_COORDINATOR_PASSWORD=Mancity@123
+ROLE_COORDINATOR_DOMAIN=openspecimen
+ROLE_COORDINATOR_DOMAIN_NAME=openspecimen
+
+# RESEARCHER
+ROLE_RESEARCHER_USERNAME=shawnmich
+ROLE_RESEARCHER_LOGIN_NAME=shawnmich
+ROLE_RESEARCHER_PASSWORD=Mancity@123
+ROLE_RESEARCHER_DOMAIN=openspecimen
+ROLE_RESEARCHER_DOMAIN_NAME=openspecimen
+
+# READONLY
+ROLE_READONLY_USERNAME=
+ROLE_READONLY_LOGIN_NAME=
+ROLE_READONLY_PASSWORD=
+ROLE_READONLY_DOMAIN=
+ROLE_READONLY_DOMAIN_NAME=
+
+# NURSE
+ROLE_NURSE_USERNAME=
+ROLE_NURSE_LOGIN_NAME=
+ROLE_NURSE_PASSWORD=
+ROLE_NURSE_DOMAIN=
+ROLE_NURSE_DOMAIN_NAME=
+
+# ─── Test Settings ────────────────────────────────────────────────────────────
+OS_CP_ID=2
+INPUT_FILE=input_participants.csv
+OUTPUT_FILE=output_results.csv
+
+# Dummy participant prefix used for auto-created update targets
+DUMMY_PPID_PREFIX=DUMMY_TC_
