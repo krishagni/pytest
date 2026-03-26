@@ -16,11 +16,8 @@ _env_output         = os.getenv("OUTPUT_FILE", "output_results.csv")
 _base, _ext         = os.path.splitext(_env_output)
 OUTPUT_FILE         = f"{_base}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{_ext}"
 
-META_FIELDS  = ["TC_ID", "TC_Description", "Expected_Result", "Role", "Enabled", "Operation"]
-OUTPUT_EXTRA = [
-    "TC_Status", "Validation_Status", "Validation_Diff",
-    "Error_Received", "HTTP_Status_Code", "Latency_ms", "Response_Payload",
-]
+META_FIELDS  = json.loads(os.getenv("META_FIELDS", '["TC_ID", "TC_Description", "Expected_Result", "Role", "Operation"]'))
+OUTPUT_EXTRA = json.loads(os.getenv("OUTPUT_EXTRA", '["TC_Status", "Validation_Status", "Validation_Diff", "Error_Received", "HTTP_Status_Code", "Latency_ms", "Response_Payload"]'))
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -75,16 +72,10 @@ def load_test_cases() -> list[dict]:
 
     with open(INPUT_FILE, newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
-
-    # Filter enabled rows
-    active_rows = [
-        r for r in rows 
-        if str(r.get("Enabled", "yes")).strip().lower() not in ("no", "false", "0", "")
-    ]
     
-    if not active_rows:
-        pytest.exit("No enabled test cases found.")
-    return active_rows
+    if not rows:
+        pytest.exit("No test cases found in input file.")
+    return rows
 
 # ── Payload Builder & Smart Casting ──────────────────────────────────────────
 
@@ -115,16 +106,24 @@ def row_to_payload(row: dict) -> dict:
                 if key not in current or not isinstance(current[key], list):
                     current[key] = []
                 idx = int(next_key)
+                
+                is_last_key = (i + 1 == len(keys) - 1)
+                
                 while len(current[key]) <= idx:
-                    current[key].append({})
-                current = current[key][idx]
+                    current[key].append(None if is_last_key else {})
+                
+                if not is_last_key:
+                    current = current[key][idx]
             elif not key.isdigit():
                 if key not in current or not isinstance(current[key], dict):
                     current[key] = {}
                 current = current[key]
 
         last_key = keys[-1]
-        if not last_key.isdigit():
+        if last_key.isdigit():
+            list_name = keys[-2]
+            current[list_name][int(last_key)] = value
+        else:
             current[last_key] = value
 
     if "activityStatus" not in payload:
