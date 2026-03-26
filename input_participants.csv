@@ -1,0 +1,10 @@
+TC_ID,Enabled,Role,Operation,Expected_Result,TC_Description,cpId,ppid,registrationDate,participant.firstName,participant.lastName,participant.gender,participant.birthDate,participant.ethnicity,participant.races.0,participant.races.1,participant.pmis.0.siteName,participant.pmis.0.mrn
+TC_01,yes,admin,create,Pass,Positive: Full registration with manual PPID,2,PPID_REG_01,2026-03-26,Rohit,Kumar,Male,1995-10-10,Not Hispanic or Latino,Asian,,,
+TC_02,yes,admin,create,Pass,Positive: Auto-generated PPID (Empty PPID column),2,,2026-03-26,Jane,Doe,Female,1990-05-05,Hispanic or Latino,White,,,
+TC_03,yes,coordinator,create,Pass,Positive: Coordinator role registration,2,PPID_COORD_03,2026-03-26,Shawn,Michaels,Unknown,1980-01-01,Unknown,White,American Indian or Alaska Native,,
+TC_04,yes,admin,create,Pass,Positive: Multi-race participant,2,PPID_MULTI_04,2026-03-26,Alex,Varga,Non-binary,1988-08-08,Not Hispanic or Latino,White,Asian,,
+TC_05,no,admin,create,Pass,Skipped: This row will not run (Enabled=no),2,SKIP_05,2026-03-26,Test,User,Male,2000-01-01,Not Hispanic or Latino,Black or African American,,,
+TC_06,yes,admin,create,Fail,Negative: Birth date in the future,2,FAIL_06,2026-03-26,Baby,Future,Female,2050-12-12,Not Hispanic or Latino,Asian,,,
+TC_07,yes,admin,create,Fail,Negative: Missing Collection Protocol ID,,FAIL_07,2026-03-26,No,CP,Male,1975-01-01,Unknown,White,,,
+TC_08,yes,admin,create,Fail,Negative: Invalid Gender value (not in PV list),2,FAIL_08,2026-03-26,Invalid,Gender,Super-Male,1990-01-01,Not Hispanic or Latino,Asian,,,
+TC_09,yes,admin,create,Pass,Positive: Minimal data (Names only),2,MIN_09,2026-03-26,Minimal,John,Unspecified,,,,,,
