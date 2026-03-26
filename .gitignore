@@ -3,3 +3,5 @@ output_results_*.csv
 .~lock.*
 report.html
 *.log
+.pytest_cache/
+__pycache__/
