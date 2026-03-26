@@ -16,8 +16,8 @@ _env_output         = os.getenv("OUTPUT_FILE", "output_results.csv")
 _base, _ext         = os.path.splitext(_env_output)
 OUTPUT_FILE         = f"{_base}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{_ext}"
 
-META_FIELDS  = json.loads(os.getenv("META_FIELDS", '["TC_ID", "TC_Description", "Expected_Result", "Role", "Operation"]'))
-OUTPUT_EXTRA = json.loads(os.getenv("OUTPUT_EXTRA", '["TC_Status", "Validation_Status", "Validation_Diff", "Error_Received", "HTTP_Status_Code", "Latency_ms", "Response_Payload"]'))
+META_FIELDS  = json.loads(os.environ["META_FIELDS"])
+OUTPUT_EXTRA = json.loads(os.environ["OUTPUT_EXTRA"])
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
