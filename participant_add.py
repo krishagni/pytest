@@ -149,7 +149,12 @@ def compare_dicts(expected, actual, path="") -> list[str]:
         if not isinstance(actual, list):
             return [f"{path}: expected list, got {type(actual).__name__}"]
         for i, ev in enumerate(expected):
-            found = any(not compare_dicts(ev, av) for av in actual if isinstance(av, dict))
+            if isinstance(ev, dict):
+                # For list-of-dicts: find any matching dict in actual
+                found = any(not compare_dicts(ev, av) for av in actual if isinstance(av, dict))
+            else:
+                # For list-of-primitives (e.g. races, ethnicities strings): normalised match
+                found = any(_norm(ev) == _norm(av) for av in actual)
             if not found:
                 diffs.append(f"{path}[{i}]: no matching item found in response")
     else:
