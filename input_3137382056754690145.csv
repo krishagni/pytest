@@ -1,3 +1,0 @@
-TC_ID,Role,Expected_Result,TC_Description,cprId,ppid,name,eventId,eventLabel,status,visitDate,clinicalDiagnoses.0,clinicalStatus,site,comments,surgicalPathologyNumber,cohort
-TC_V01,admin,Pass,Sample Registration fields,6447,A-1.0236,,22,,Complete,2026-03-27,,,Biobank Site HB,This is for testing,54,Birth study
-TC_V01,admin,Pass,Pv Input fields - value ,6447,A-1.0236,,22,,Complete,2026-03-27,Not Specified ,Not Specified,Biobank Site HB,This is for testing,54,Birth study

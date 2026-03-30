@@ -1,9 +1,26 @@
-import os, csv, json, pytest, requests, functools, io
+import os, csv, json, pytest, requests, functools, logging, threading
 from datetime import datetime, timezone
+from typing import Optional
 from dotenv import load_dotenv
+
+# Setup Logging
+logging.basicConfig(
+    level=logging.INFO, 
+    format="%(asctime)s [%(levelname)s] %(message)s", 
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
+
+# Load externalized messages
+MSG_FILE = os.path.join(os.path.dirname(__file__), "messages.json")
+with open(MSG_FILE, "r", encoding="utf-8") as f:
+    MESSAGES = json.load(f)
+
+def get_msg(msg_id, **kwargs):
+    return MESSAGES.get(msg_id, msg_id).format(**kwargs)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 BASE_URL            = os.getenv("OS_BASE_URL")
@@ -11,6 +28,7 @@ GSHEET_CSV_URL      = os.getenv("GSHEET_CSV_URL")
 INPUT_FILE          = os.getenv("INPUT_FILE", "input_data.csv")
 SAVE_SNAPSHOT       = os.getenv("SAVE_INPUT_SNAPSHOT", "false").lower() == "true"
 SNAPSHOT_DIR        = os.getenv("SNAPSHOT_DIR", "input_snapshots")
+DATA_DIR            = os.getenv("DATA_DIR", "temp_test_data")
 
 _env_output         = os.getenv("OUTPUT_FILE", "output_results.csv")
 _base, _ext         = os.path.splitext(_env_output)
@@ -29,7 +47,7 @@ def get_token(role: str) -> str:
     domain = os.getenv(f"ROLE_{key}_DOMAIN_NAME") or os.getenv(f"ROLE_{key}_DOMAIN")
 
     if not login or not pwd:
-        raise ValueError(f"Credentials missing for role '{role}' in .env")
+        raise ValueError(get_msg("ERR_CREDENTIALS_MISSING", role=role))
 
     creds = {"loginName": login, "password": pwd}
     if domain: creds["domainName"] = domain
@@ -43,8 +61,17 @@ def get_token(role: str) -> str:
 def load_test_cases(csv_url=GSHEET_CSV_URL, input_file=INPUT_FILE) -> list[dict]:
     """Downloads the GSheet to a local CSV file, then reads it."""
     
+    # Ensure DATA_DIR exists
+    if not os.path.exists(DATA_DIR):
+        os.makedirs(DATA_DIR)
+        logger.info(f"📁 Created data directory: {DATA_DIR}")
+
+    # If input_file is just a filename, prepend DATA_DIR
+    if not os.path.dirname(input_file):
+        input_file = os.path.join(DATA_DIR, input_file)
+
     if csv_url:
-        print(f"\n📡 Downloading data from GSheet...")
+        logger.info(get_msg("INFO_DOWNLOADING_GSHEET"))
         try:
             resp = requests.get(csv_url, timeout=30)
             resp.raise_for_status()
@@ -52,7 +79,7 @@ def load_test_cases(csv_url=GSHEET_CSV_URL, input_file=INPUT_FILE) -> list[dict]
             # 1. Save the primary input file locally
             with open(input_file, "w", encoding="utf-8") as f:
                 f.write(resp.text)
-            print(f"💾 Saved latest TCs to: {input_file}")
+            logger.info(get_msg("INFO_SAVED_LOCAL_TCS", input_file=input_file))
 
             # 2. Handle Snapshots (if enabled in .env)
             if SAVE_SNAPSHOT:
@@ -61,20 +88,22 @@ def load_test_cases(csv_url=GSHEET_CSV_URL, input_file=INPUT_FILE) -> list[dict]
                 snap_path = os.path.join(SNAPSHOT_DIR, f"input_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
                 with open(snap_path, "w", encoding="utf-8") as sf:
                     sf.write(resp.text)
-                print(f"📸 Snapshot archived: {snap_path}")
+                logger.info(get_msg("INFO_SNAPSHOT_ARCHIVED", snap_path=snap_path))
 
         except Exception as e:
-            print(f"⚠️ Download failed ({e}). Attempting to use existing {input_file}...")
+            logger.warning(get_msg("WARN_DOWNLOAD_FAILED", e=e, input_file=input_file))
 
     # 3. Process the local file
     if not os.path.exists(input_file):
-        pytest.exit(f"CRITICAL: {input_file} not found. Script cannot proceed.")
+        logger.critical(get_msg("ERR_INPUT_FILE_NOT_FOUND", input_file=input_file))
+        pytest.exit(get_msg("ERR_INPUT_FILE_NOT_FOUND", input_file=input_file))
 
     with open(input_file, newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     
     if not rows:
-        pytest.exit("No test cases found in input file.")
+        logger.critical(get_msg("ERR_NO_TEST_CASES"))
+        pytest.exit(get_msg("ERR_NO_TEST_CASES"))
     return rows
 
 # ── Payload Builder & Smart Casting ──────────────────────────────────────────
@@ -93,6 +122,7 @@ def _smart_cast(v: str):
 def row_to_payload(row: dict) -> dict:
     payload = {}
     for k, v in row.items():
+        k = k.strip()
         if not k or k in META_FIELDS or k in OUTPUT_EXTRA or v == "":
             continue
 
@@ -166,12 +196,18 @@ def compare_dicts(expected, actual, path="") -> list[str]:
             diffs.append(f"{path}: expected='{expected}' | actual='{actual}'")
     return diffs
 
-def deep_validate(res_id: int, expected_payload: dict, headers: dict, api_url: str) -> tuple[str, str]:
+def deep_validate(res_id: int, expected_payload: dict, headers: dict, api_url: str, actual_response: Optional[dict] = None) -> tuple[str, str]:
     try:
-        validate_url = f"{api_url.rstrip('/')}/{res_id}"
-        resp = requests.get(validate_url, headers=headers, timeout=15)
-        if not resp.ok: return "Fail", f"GET HTTP {resp.status_code}"
-        diffs = compare_dicts(expected_payload, resp.json())
+        # Optimization: If the POST response already contains fields to validate, use it
+        if actual_response and any(k in actual_response for k in expected_payload if k != "id"):
+            resp_data = actual_response
+        else:
+            validate_url = f"{api_url.rstrip('/')}/{res_id}"
+            resp = requests.get(validate_url, headers=headers, timeout=15)
+            if not resp.ok: return "Fail", f"GET HTTP {resp.status_code}"
+            resp_data = resp.json()
+            
+        diffs = compare_dicts(expected_payload, resp_data)
         return ("Pass", "") if not diffs else ("Fail", " | ".join(diffs))
     except Exception as exc:
         return "Error", str(exc)
@@ -179,10 +215,16 @@ def deep_validate(res_id: int, expected_payload: dict, headers: dict, api_url: s
 # ── Execution ─────────────────────────────────────────────────────────────────
 
 def execute_tc(row: dict) -> dict:
-    api_url = row.pop("_api_url_", f"{BASE_URL}/collection-protocol-registrations/")
-    
-    result = {**row, "TC_Status": "FAIL", "Validation_Status": "", "Validation_Diff": "", 
-              "Error_Received": "", "HTTP_Status_Code": "", "Latency_ms": "", "Response_Payload": ""}
+    api_url = row.pop("_api_url_", None)
+    if not api_url:
+        err_msg = get_msg("ERR_MISSING_API_URL")
+        logger.error(err_msg)
+        return {**row, "TC_Status": "ERROR", "Error_Received": err_msg}
+
+    result = {**row}
+    for field in OUTPUT_EXTRA:
+        result[field] = ""
+    result["TC_Status"] = "FAIL" # Set a default status
     try:
         role = row.get("Role", "admin").strip()
         token = get_token(role)
@@ -195,44 +237,66 @@ def execute_tc(row: dict) -> dict:
         result["Latency_ms"] = int((datetime.now() - t0).total_seconds() * 1000)
         result["HTTP_Status_Code"] = resp.status_code
         
+        # Extract body but DO NOT save to result to keep CSV small
         try:
             resp_body = resp.json()
-            result["Response_Payload"] = json.dumps(resp_body)
         except:
             resp_body = resp.text
-            result["Response_Payload"] = resp_body
 
-        is_positive = row.get("Expected_Result", "").lower() in ("pass", "p", "success")
+        # Smart Validation: Empty Error Code = Positive Test, Provided Error Code = Negative Test
+        expected_err = row.get("Expected_Error_Code", "").strip().lower()
+        is_positive = not expected_err
         
         if is_positive:
             if resp.ok:
                 result["TC_Status"] = "PASS"
                 res_id = resp_body.get("id") if isinstance(resp_body, dict) else None
                 if res_id:
-                    v_stat, v_diff = deep_validate(res_id, payload, headers, api_url)
+                    # Optimized: Pass the POST response body to skip redundant GET if possible
+                    v_stat, v_diff = deep_validate(res_id, payload, headers, api_url, actual_response=resp_body if isinstance(resp_body, dict) else None)
                     result["Validation_Status"], result["Validation_Diff"] = v_stat, v_diff
                     if v_stat != "Pass": result["TC_Status"] = "FAIL"
             else:
-                result["Error_Received"] = result["Response_Payload"][:500]
+                result["Error_Received"] = str(resp_body)[:500]
         else:
-            expected_err = row.get("Expected_Error_Code", "").strip().lower()
-            actual_err = str(resp_body.get("code", "")).lower() if isinstance(resp_body, dict) else ""
+            
+            # Extract all actual error codes from JSON response
+            actual_codes = []
+            if isinstance(resp_body, dict):
+                actual_codes.append(str(resp_body.get("code", "")).lower())
+            elif isinstance(resp_body, list):
+                actual_codes.extend([str(err.get("code", "")).lower() for err in resp_body if isinstance(err, dict)])
+            
             if not resp.ok:
-                if not expected_err or expected_err in actual_err or expected_err in result["Response_Payload"].lower():
+                resp_str = json.dumps(resp_body) if isinstance(resp_body, dict) else str(resp_body)
+                # PASS if (no code expected) OR (code in list) OR (code in body string)
+                if not expected_err or any(expected_err == c for c in actual_codes) or expected_err in resp_str.lower():
                     result["TC_Status"] = "PASS"
                 else:
-                    result["Error_Received"] = f"Code mismatch: {actual_err}"
+                    result["Error_Received"] = f"Code mismatch: expected='{expected_err}' | actual='{actual_codes}'"
             else:
                 result["Error_Received"] = "Expected fail but got HTTP 200"
     except Exception as e:
         result["Error_Received"] = str(e)
     return result
 
-# ── Pytest Hooks ──────────────────────────────────────────────────────────────
+# ── Integration & Export ──────────────────────────────────────────────────────
 
-_results = []
+_csv_lock = threading.Lock()
+_header_initialized = False
 
+def init_output_file():
+    """Initializes the output CSV with headers if it doesn't already exist."""
+    global _header_initialized
+    with _csv_lock:
+        if not _header_initialized:
+            cols = META_FIELDS + OUTPUT_EXTRA
+            with open(OUTPUT_FILE, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
+                writer.writeheader()
+            _header_initialized = True
 def run_tc(api_url: str, csv_url: str, metafunc) -> list[dict]:
+
     if "tc_row" in metafunc.fixturenames:
         input_filename = f"input_{abs(hash(csv_url))}.csv" if csv_url else INPUT_FILE
         test_cases = load_test_cases(csv_url, input_filename)
@@ -241,22 +305,26 @@ def run_tc(api_url: str, csv_url: str, metafunc) -> list[dict]:
         return test_cases
     return []
 
-def save_results():
-    if _results:
-        keys = list(_results[0].keys())
-        cols = [c for c in META_FIELDS if c in keys] + \
-               [c for c in keys if c not in META_FIELDS and c not in OUTPUT_EXTRA] + \
-               [c for c in OUTPUT_EXTRA if c in keys]
-        with open(OUTPUT_FILE, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
-            writer.writeheader()
-            writer.writerows(_results)
-        print(f"\n✅ Results: {OUTPUT_FILE}")
 
 def execute_and_record_test(tc_row, record_property):
     res = execute_tc(tc_row)
-    _results.append(res)
+    
+    # Streaming Write to CSV
+    init_output_file()
+    cols = META_FIELDS + OUTPUT_EXTRA
+    with _csv_lock:
+        with open(OUTPUT_FILE, "a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
+            writer.writerow(res)
+
     for field in OUTPUT_EXTRA:
         record_property(field, str(res.get(field, "")))
     if res["TC_Status"] != "PASS":
-        pytest.fail(f"[{tc_row.get('TC_ID')}] {res.get('Error_Received') or res.get('Validation_Diff')}", pytrace=False) 
+        pytest.fail(f"[{tc_row.get('TC_ID')}] {res.get('Error_Received') or res.get('Validation_Diff')}", pytrace=False)
+
+def cleanup_temp_data():
+    """Deletes all files within DATA_DIR and removes the directory."""
+    if os.path.exists(DATA_DIR):
+        import shutil
+        shutil.rmtree(DATA_DIR)
+        logger.info(f"🧹 Cleaned up temporary data directory: {DATA_DIR}") 

@@ -1,0 +1,10 @@
+{
+  "ERR_CREDENTIALS_MISSING": "Missing credentials for role '{role}'. Check ROLE_{role}_LOGIN_NAME and ROLE_{role}_PASSWORD in .env.",
+  "ERR_INPUT_FILE_NOT_FOUND": "Input file not found: '{input_file}'. Ensure the GSheet URL is valid or the local file exists.",
+  "ERR_NO_TEST_CASES": "No test cases found in the input file. Check the GSheet or local CSV.",
+  "ERR_MISSING_API_URL": "No _api_url_ found in test case row. Check that run_tc() injected the URL correctly.",
+  "INFO_DOWNLOADING_GSHEET": "⬇️  Downloading test cases from Google Sheet...",
+  "INFO_SAVED_LOCAL_TCS": "💾 Saved test cases locally to: {input_file}",
+  "INFO_SNAPSHOT_ARCHIVED": "📸 Input snapshot archived to: {snap_path}",
+  "WARN_DOWNLOAD_FAILED": "⚠️  GSheet download failed ({e}). Falling back to local file: {input_file}"
+}
