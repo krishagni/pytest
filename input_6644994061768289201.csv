@@ -1,0 +1,18 @@
+TC_ID,Role,Operation,Expected_Result,TC_Description,cpId,ppid,registrationDate,site,externalSubjectId,participant.firstName,participant.middleName,participant.lastName,participant.gender,participant.birthDate,participant.vitalStatus,participant.emailAddress,participant.ethnicities.0,participant.ethnicities.1,participant.ethnicities.2,participant.races.0,participant.races.1,participant.races.2,participant.pmis.0.siteName,participant.pmis.0.mrn,participant.pmis.1.siteName,participant.pmis.1.mrn
+TC_01,admin,create,Pass,Full registration with all fields,2,,2026-03-26,ABCFR,EXT-0024,Rohit,Raj,Chaudhari,Male,1995-10-10,Alive,rohit.chaudhari@test.com,Hispanic or Latino,Unknown,,Asian,White,,ABCFR,RNC1BR56,,
+TC_02,admin,create,Pass,Registration with race and ethnicities,2,,2026-03-26,ABCFR,,Jane,,Doe,Female,1990-05-05,Alive,jane.doe@test.com,Hispanic or Latino,Unknown,,White,,,,,,
+TC_03,coordinator,create,Fail,Coordinator role - insufficient rights,2,,2026-03-26,ABCFR,,Shawn,,Michaels,Other,1980-01-01,Alive,,Unknown,,,White,,,,,,
+TC_04,admin,create,Pass,Multiple race values,2,,2026-03-26,,,Alex,,Varga,Non-Binary,1988-08-08,Alive,,Not Hispanic or Latino,,,White,Black or African American,White,,,,
+TC_05,admin,create,Pass,Multiple ethnicity values,2,,2026-03-19,,,Alex,,Ferguusion,Female,,,,Not Hispanic or Latino,Unknown,Not Reported,,,,,,,
+TC_06,admin,create,Fail,Incorrect ethnicity Value,2,,2026-03-26,ABCFR,,Test,,User,Male,2000-01-01,Alive,,Not Hispanic or Latino,Hispanic or latino,,Black or African American,,,,,,
+TC_07,researcher,create,Fail,Researcher role - insufficient rights,2,,2026-03-26,ABCFR,,Test,,Future,Female,,Dead,,Not Hispanic or Latino,Not Reported,,Asian,,,,,,
+TC_08,admin,create,Fail,Missing Collection Protocol ID,,,2026-03-26,ABCFR,,No,,CP,Male,1975-01-01,,,Unknown,Not Hispanic or Latino,,White,,,,,,
+TC_09,admin,create,Fail,Invalid Gender value (not in PV list),2,,2026-03-26,ABCFR,,Invalid,,Gender,Super-Male,1990-01-01,,,Not Hispanic or Latino,,,Asian,,,,,,
+TC_10,admin,create,Pass,Minimal data ,2,,2026-03-26,,,,,,Male,,,,,,,,,,,,,
+TC_11,admin,create,Fail,Incorrect pmis site name,2,,,ABCFR,,Minimal,,John,Male,,,,,Hispanic or Latino,,,Black or African American,,ACBFR,67A24,,
+TC_12,admin,create,Pass,Correct pmis with multiple sites,2,,2026-03-26,Austin Health,,Romil,,John,Male,,Alive,,Hispanic or Latino,,,,,,ABCFR,A4535,Adelaide,PL266BY
+TC_13,admin,create,Fail,Incorrect Site ,2,,2026-03-26,fake hospital,HBG - 101,FC,,,,,,,,,,,,,,,,
+TC_14,admin,create,Fail,Incorrect email address,2,,,,,Raman,Raghav,,Male,,,NoEmail,,,,,,,,,,
+TC_15,admin,create,Fail,Future date of birth ,2,,2026-03-26,,HGT -2001,John,,Davies,Male,2050-12-12,,,,,,,,,,,,
+TC_16,admin,create,Fail,Incorrect vital status ,2,,2026-03-26,,,Dave,Batista ,,Female,,unknown,,,,,,,,,,,
+TC_17,researcher,create,Fail,Researcher role - insufficient rights,2,,2026-03-02,,,,,,,,,,,,,,,,,,,

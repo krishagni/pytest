@@ -7,8 +7,8 @@ load_dotenv()
 
 # ── Config ────────────────────────────────────────────────────────────────────
 BASE_URL            = os.getenv("OS_BASE_URL")
-GSHEET_CSV_URL      = os.getenv("VISIT_GSHEET_CSV_URL")
-INPUT_FILE          = os.getenv("INPUT_FILE", "input_visits.csv")
+GSHEET_CSV_URL      = os.getenv("GSHEET_CSV_URL")
+INPUT_FILE          = os.getenv("INPUT_FILE", "input_data.csv")
 SAVE_SNAPSHOT       = os.getenv("SAVE_INPUT_SNAPSHOT", "false").lower() == "true"
 SNAPSHOT_DIR        = os.getenv("SNAPSHOT_DIR", "input_snapshots")
 
@@ -40,19 +40,19 @@ def get_token(role: str) -> str:
 
 # ── Data Loading (Now Saves Locally First) ────────────────────────────────────
 
-def load_test_cases() -> list[dict]:
+def load_test_cases(csv_url=GSHEET_CSV_URL, input_file=INPUT_FILE) -> list[dict]:
     """Downloads the GSheet to a local CSV file, then reads it."""
     
-    if GSHEET_CSV_URL:
+    if csv_url:
         print(f"\n📡 Downloading data from GSheet...")
         try:
-            resp = requests.get(GSHEET_CSV_URL, timeout=30)
+            resp = requests.get(csv_url, timeout=30)
             resp.raise_for_status()
             
             # 1. Save the primary input file locally
-            with open(INPUT_FILE, "w", encoding="utf-8") as f:
+            with open(input_file, "w", encoding="utf-8") as f:
                 f.write(resp.text)
-            print(f"💾 Saved latest TCs to: {INPUT_FILE}")
+            print(f"💾 Saved latest TCs to: {input_file}")
 
             # 2. Handle Snapshots (if enabled in .env)
             if SAVE_SNAPSHOT:
@@ -64,13 +64,13 @@ def load_test_cases() -> list[dict]:
                 print(f"📸 Snapshot archived: {snap_path}")
 
         except Exception as e:
-            print(f"⚠️ Download failed ({e}). Attempting to use existing {INPUT_FILE}...")
+            print(f"⚠️ Download failed ({e}). Attempting to use existing {input_file}...")
 
     # 3. Process the local file
-    if not os.path.exists(INPUT_FILE):
-        pytest.exit(f"CRITICAL: {INPUT_FILE} not found. Script cannot proceed.")
+    if not os.path.exists(input_file):
+        pytest.exit(f"CRITICAL: {input_file} not found. Script cannot proceed.")
 
-    with open(INPUT_FILE, newline="", encoding="utf-8") as f:
+    with open(input_file, newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     
     if not rows:
@@ -166,9 +166,10 @@ def compare_dicts(expected, actual, path="") -> list[str]:
             diffs.append(f"{path}: expected='{expected}' | actual='{actual}'")
     return diffs
 
-def deep_validate(visit_id: int, expected_payload: dict, headers: dict) -> tuple[str, str]:
+def deep_validate(res_id: int, expected_payload: dict, headers: dict, api_url: str) -> tuple[str, str]:
     try:
-        resp = requests.get(f"{BASE_URL}/visits/{visit_id}", headers=headers, timeout=15)
+        validate_url = f"{api_url.rstrip('/')}/{res_id}"
+        resp = requests.get(validate_url, headers=headers, timeout=15)
         if not resp.ok: return "Fail", f"GET HTTP {resp.status_code}"
         diffs = compare_dicts(expected_payload, resp.json())
         return ("Pass", "") if not diffs else ("Fail", " | ".join(diffs))
@@ -178,6 +179,8 @@ def deep_validate(visit_id: int, expected_payload: dict, headers: dict) -> tuple
 # ── Execution ─────────────────────────────────────────────────────────────────
 
 def execute_tc(row: dict) -> dict:
+    api_url = row.pop("_api_url_", f"{BASE_URL}/collection-protocol-registrations/")
+    
     result = {**row, "TC_Status": "FAIL", "Validation_Status": "", "Validation_Diff": "", 
               "Error_Received": "", "HTTP_Status_Code": "", "Latency_ms": "", "Response_Payload": ""}
     try:
@@ -187,7 +190,7 @@ def execute_tc(row: dict) -> dict:
         payload = row_to_payload(row)
 
         t0 = datetime.now()
-        resp = requests.post(f"{BASE_URL}/visits/", headers=headers, json=payload, timeout=15)
+        resp = requests.post(api_url, headers=headers, json=payload, timeout=15)
         
         result["Latency_ms"] = int((datetime.now() - t0).total_seconds() * 1000)
         result["HTTP_Status_Code"] = resp.status_code
@@ -204,9 +207,9 @@ def execute_tc(row: dict) -> dict:
         if is_positive:
             if resp.ok:
                 result["TC_Status"] = "PASS"
-                visit_id = resp_body.get("id") if isinstance(resp_body, dict) else None
-                if visit_id:
-                    v_stat, v_diff = deep_validate(visit_id, payload, headers)
+                res_id = resp_body.get("id") if isinstance(resp_body, dict) else None
+                if res_id:
+                    v_stat, v_diff = deep_validate(res_id, payload, headers, api_url)
                     result["Validation_Status"], result["Validation_Diff"] = v_stat, v_diff
                     if v_stat != "Pass": result["TC_Status"] = "FAIL"
             else:
@@ -229,14 +232,16 @@ def execute_tc(row: dict) -> dict:
 
 _results = []
 
-def pytest_generate_tests(metafunc):
+def run_tc(api_url: str, csv_url: str, metafunc) -> list[dict]:
     if "tc_row" in metafunc.fixturenames:
-        test_cases = load_test_cases()
-        metafunc.parametrize("tc_row", test_cases, ids=[f"{r.get('TC_ID', 'TC')}" for r in test_cases])
+        input_filename = f"input_{abs(hash(csv_url))}.csv" if csv_url else INPUT_FILE
+        test_cases = load_test_cases(csv_url, input_filename)
+        for tc in test_cases:
+            tc["_api_url_"] = api_url
+        return test_cases
+    return []
 
-@pytest.fixture(scope="session", autouse=True)
-def save_results_to_csv():
-    yield
+def save_results():
     if _results:
         keys = list(_results[0].keys())
         cols = [c for c in META_FIELDS if c in keys] + \
@@ -248,7 +253,7 @@ def save_results_to_csv():
             writer.writerows(_results)
         print(f"\n✅ Results: {OUTPUT_FILE}")
 
-def test_visit(tc_row, record_property):
+def execute_and_record_test(tc_row, record_property):
     res = execute_tc(tc_row)
     _results.append(res)
     for field in OUTPUT_EXTRA:
