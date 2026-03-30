@@ -7,8 +7,8 @@ load_dotenv()
 
 # ── Config ────────────────────────────────────────────────────────────────────
 BASE_URL            = os.getenv("OS_BASE_URL")
-GSHEET_CSV_URL      = os.getenv("GSHEET_CSV_URL")
-INPUT_FILE          = os.getenv("INPUT_FILE", "input_participants.csv")
+GSHEET_CSV_URL      = os.getenv("VISIT_GSHEET_CSV_URL")
+INPUT_FILE          = os.getenv("INPUT_FILE", "input_visits.csv")
 SAVE_SNAPSHOT       = os.getenv("SAVE_INPUT_SNAPSHOT", "false").lower() == "true"
 SNAPSHOT_DIR        = os.getenv("SNAPSHOT_DIR", "input_snapshots")
 
@@ -166,9 +166,9 @@ def compare_dicts(expected, actual, path="") -> list[str]:
             diffs.append(f"{path}: expected='{expected}' | actual='{actual}'")
     return diffs
 
-def deep_validate(cpr_id: int, expected_payload: dict, headers: dict) -> tuple[str, str]:
+def deep_validate(visit_id: int, expected_payload: dict, headers: dict) -> tuple[str, str]:
     try:
-        resp = requests.get(f"{BASE_URL}/collection-protocol-registrations/{cpr_id}", headers=headers, timeout=15)
+        resp = requests.get(f"{BASE_URL}/visits/{visit_id}", headers=headers, timeout=15)
         if not resp.ok: return "Fail", f"GET HTTP {resp.status_code}"
         diffs = compare_dicts(expected_payload, resp.json())
         return ("Pass", "") if not diffs else ("Fail", " | ".join(diffs))
@@ -187,7 +187,7 @@ def execute_tc(row: dict) -> dict:
         payload = row_to_payload(row)
 
         t0 = datetime.now()
-        resp = requests.post(f"{BASE_URL}/collection-protocol-registrations/", headers=headers, json=payload, timeout=15)
+        resp = requests.post(f"{BASE_URL}/visits/", headers=headers, json=payload, timeout=15)
         
         result["Latency_ms"] = int((datetime.now() - t0).total_seconds() * 1000)
         result["HTTP_Status_Code"] = resp.status_code
@@ -204,9 +204,9 @@ def execute_tc(row: dict) -> dict:
         if is_positive:
             if resp.ok:
                 result["TC_Status"] = "PASS"
-                cpr_id = resp_body.get("id") if isinstance(resp_body, dict) else None
-                if cpr_id:
-                    v_stat, v_diff = deep_validate(cpr_id, payload, headers)
+                visit_id = resp_body.get("id") if isinstance(resp_body, dict) else None
+                if visit_id:
+                    v_stat, v_diff = deep_validate(visit_id, payload, headers)
                     result["Validation_Status"], result["Validation_Diff"] = v_stat, v_diff
                     if v_stat != "Pass": result["TC_Status"] = "FAIL"
             else:
@@ -248,7 +248,7 @@ def save_results_to_csv():
             writer.writerows(_results)
         print(f"\n✅ Results: {OUTPUT_FILE}")
 
-def test_participant(tc_row, record_property):
+def test_visit(tc_row, record_property):
     res = execute_tc(tc_row)
     _results.append(res)
     for field in OUTPUT_EXTRA:
