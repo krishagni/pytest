@@ -1,4 +1,4 @@
-import os, csv, json, pytest, requests, functools, logging, threading
+import os, csv, json, pytest, requests, functools, logging, threading, io
 from datetime import datetime, timezone
 from typing import Optional
 from dotenv import load_dotenv
@@ -29,6 +29,7 @@ INPUT_FILE          = os.getenv("INPUT_FILE", "input_data.csv")
 SAVE_SNAPSHOT       = os.getenv("SAVE_INPUT_SNAPSHOT", "false").lower() == "true"
 SNAPSHOT_DIR        = os.getenv("SNAPSHOT_DIR", "input_snapshots")
 DATA_DIR            = os.getenv("DATA_DIR", "temp_test_data")
+CLEANUP_RESOURCES   = os.getenv("CLEANUP_RESOURCES", "true").lower() == "true"
 
 _env_output         = os.getenv("OUTPUT_FILE", "output_results.csv")
 _base, _ext         = os.path.splitext(_env_output)
@@ -39,12 +40,45 @@ OUTPUT_EXTRA = json.loads(os.environ["OUTPUT_EXTRA"])
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
+_ROLES_CACHE = None
+
+def load_roles_from_gsheet() -> dict:
+    master_id = os.getenv("MASTER_GSHEET_ID")
+    roles_gid = os.getenv("ROLES_GSHEET_GID")
+    if not master_id or not roles_gid:
+        return {}
+    url = f"https://docs.google.com/spreadsheets/d/{master_id}/export?format=csv&gid={roles_gid}"
+    try:
+        resp = requests.get(url, timeout=30)
+        resp.raise_for_status()
+        reader = csv.DictReader(io.StringIO(resp.text))
+        roles = {}
+        for row in reader:
+            r = row.get("Role", "").strip().upper()
+            if r:
+                roles[r] = {
+                    "login": row.get("Login_Name", "").strip(),
+                    "password": row.get("Password", "").strip(),
+                    "domain": row.get("Domain_Name", "").strip()
+                }
+        logger.info(f"🔑 Loaded {len(roles)} roles from GSheet")
+        return roles
+    except Exception as e:
+        logger.warning(f"Failed to load roles from GSheet: {e}")
+        return {}
+
 @functools.lru_cache(maxsize=10)
 def get_token(role: str) -> str:
+    global _ROLES_CACHE
+    if _ROLES_CACHE is None:
+        _ROLES_CACHE = load_roles_from_gsheet()
+
     key = role.upper().strip()
-    login  = os.getenv(f"ROLE_{key}_LOGIN_NAME") or os.getenv(f"ROLE_{key}_USER")
-    pwd    = os.getenv(f"ROLE_{key}_PASSWORD")   or os.getenv(f"ROLE_{key}_PASS")
-    domain = os.getenv(f"ROLE_{key}_DOMAIN_NAME") or os.getenv(f"ROLE_{key}_DOMAIN")
+    gsheet_role = _ROLES_CACHE.get(key, {})
+    
+    login  = gsheet_role.get("login")
+    pwd    = gsheet_role.get("password")
+    domain = gsheet_role.get("domain")
 
     if not login or not pwd:
         raise ValueError(get_msg("ERR_CREDENTIALS_MISSING", role=role))
@@ -255,9 +289,29 @@ def execute_tc(row: dict) -> dict:
                     # Optimized: Pass the POST response body to skip redundant GET if possible
                     v_stat, v_diff = deep_validate(res_id, payload, headers, api_url, actual_response=resp_body if isinstance(resp_body, dict) else None)
                     result["Validation_Status"], result["Validation_Diff"] = v_stat, v_diff
-                    if v_stat != "Pass": result["TC_Status"] = "FAIL"
+                    if v_stat != "Pass": 
+                        result["TC_Status"] = "FAIL"
+                    
+                    # Teardown / Cleanup
+                    if CLEANUP_RESOURCES:
+                        try:
+                            delete_url = f"{api_url.rstrip('/')}/{res_id}?forceDelete=true"
+                            del_resp = requests.delete(delete_url, headers=headers, timeout=15)
+                            if not del_resp.ok:
+                                logger.warning(f"⚠️ Failed to delete resource at {delete_url}: HTTP {del_resp.status_code} - {del_resp.text}")
+                            else:
+                                logger.info(f"🗑️ Successfully deleted resource: {res_id}")
+                        except Exception as e:
+                            logger.warning(f"⚠️ Exception during resource deletion for {res_id}: {e}")
             else:
-                result["Error_Received"] = str(resp_body)[:500]
+                if isinstance(resp_body, list) and all(isinstance(e, dict) and "code" in e for e in resp_body):
+                    codes = ", ".join([str(e.get("code")) for e in resp_body])
+                    result["Error_Received"] = f"Failed HTTP {resp.status_code} - Code: {codes}"
+                elif isinstance(resp_body, dict) and "code" in resp_body:
+                    result["Error_Received"] = f"Failed HTTP {resp.status_code} - Code: {resp_body.get('code')}"
+                else:
+                    body_str = str(resp_body)[:400] if resp_body else ""
+                    result["Error_Received"] = f"Failed HTTP {resp.status_code}: {body_str}"
         else:
             
             # Extract all actual error codes from JSON response
@@ -295,10 +349,12 @@ def init_output_file():
                 writer = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
                 writer.writeheader()
             _header_initialized = True
+import hashlib
+
 def run_tc(api_url: str, csv_url: str, metafunc) -> list[dict]:
 
     if "tc_row" in metafunc.fixturenames:
-        input_filename = f"input_{abs(hash(csv_url))}.csv" if csv_url else INPUT_FILE
+        input_filename = f"input_{hashlib.md5(csv_url.encode()).hexdigest()[:8]}.csv" if csv_url else INPUT_FILE
         test_cases = load_test_cases(csv_url, input_filename)
         for tc in test_cases:
             tc["_api_url_"] = api_url

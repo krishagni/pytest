@@ -83,21 +83,6 @@ def get_resources() -> list[dict]:
 
 # ── pytest hooks ──────────────────────────────────────────────────────────────
 
-def pytest_sessionstart(session):
-    """Prefetch all CSV data in parallel at the start of the session."""
-    from concurrent.futures import ThreadPoolExecutor
-
-    resources = get_resources()
-    urls = [r["csv_url"] for r in resources]
-
-    with ThreadPoolExecutor(max_workers=max(len(urls), 1)) as executor:
-        executor.map(
-            lambda url: os_test_framework.load_test_cases(
-                url, f"input_{abs(hash(url))}.csv"
-            ),
-            urls,
-        )
-
 
 @pytest.fixture(scope="session", autouse=True)
 def save_combined_results():

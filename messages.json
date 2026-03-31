@@ -1,5 +1,5 @@
 {
-  "ERR_CREDENTIALS_MISSING": "Missing credentials for role '{role}'. Check ROLE_{role}_LOGIN_NAME and ROLE_{role}_PASSWORD in .env.",
+  "ERR_CREDENTIALS_MISSING": "Missing credentials for role '{role}'. Please configure ROLES_GSHEET_GID in .env and ensure the Role exists in that Google Sheet.",
   "ERR_INPUT_FILE_NOT_FOUND": "Input file not found: '{input_file}'. Ensure the GSheet URL is valid or the local file exists.",
   "ERR_NO_TEST_CASES": "No test cases found in the input file. Check the GSheet or local CSV.",
   "ERR_MISSING_API_URL": "No _api_url_ found in test case row. Check that run_tc() injected the URL correctly.",
