@@ -12,7 +12,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Load environment variables
-load_dotenv()
+env_file = os.getenv("ENV_FILE", ".env")
+load_dotenv(env_file)
 
 # Load externalized messages
 MSG_FILE = os.path.join(os.path.dirname(__file__), "messages.json")
@@ -142,6 +143,22 @@ def load_test_cases(csv_url=GSHEET_CSV_URL, input_file=INPUT_FILE) -> list[dict]
 
 # ── Payload Builder & Smart Casting ──────────────────────────────────────────
 
+_DATE_FORMATS = [
+    "%Y-%m-%d %H:%M",       # 2026-04-01 10:00
+    "%Y-%m-%d %H:%M:%S",    # 2026-04-01 10:00:00
+    "%Y-%m-%d",              # 2026-04-01
+]
+
+def _try_parse_date_to_epoch_ms(val: str):
+    """Attempt to parse a date/datetime string to epoch milliseconds."""
+    for fmt in _DATE_FORMATS:
+        try:
+            dt = datetime.strptime(val, fmt)
+            return int(dt.timestamp() * 1000)
+        except ValueError:
+            continue
+    return None
+
 def _smart_cast(v: str):
     val = str(v).strip()
     if val.lower() == "true": return True
@@ -151,7 +168,12 @@ def _smart_cast(v: str):
         if "." in val: return float(val)
         return int(val)
     except ValueError:
-        return val
+        pass
+    # Try date/datetime -> epoch ms conversion
+    epoch = _try_parse_date_to_epoch_ms(val)
+    if epoch is not None:
+        return epoch
+    return val
 
 def row_to_payload(row: dict) -> dict:
     payload = {}
@@ -227,7 +249,7 @@ def compare_dicts(expected, actual, path="") -> list[str]:
             try: actual_norm = _norm(_ts_to_date(actual))
             except: pass
         if _norm(expected) != actual_norm:
-            diffs.append(f"{path}: expected='{expected}' | actual='{actual}'")
+            diffs.append(f"{path}: expected='{expected}' | actual='{actual_norm}'")
     return diffs
 
 def deep_validate(res_id: int, expected_payload: dict, headers: dict, api_url: str, actual_response: Optional[dict] = None) -> tuple[str, str]:

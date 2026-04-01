@@ -9,7 +9,8 @@ from dotenv import load_dotenv
 
 import os_test_framework
 
-load_dotenv()
+env_file = os.getenv("ENV_FILE", ".env")
+load_dotenv(env_file)
 
 logger = logging.getLogger(__name__)
 
