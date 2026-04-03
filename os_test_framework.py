@@ -1,5 +1,5 @@
 import os, csv, json, pytest, requests, functools, logging, threading, io
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 from dotenv import load_dotenv
 
@@ -143,22 +143,6 @@ def load_test_cases(csv_url=GSHEET_CSV_URL, input_file=INPUT_FILE) -> list[dict]
 
 # ── Payload Builder & Smart Casting ──────────────────────────────────────────
 
-_DATE_FORMATS = [
-    "%Y-%m-%d %H:%M",       # 2026-04-01 10:00
-    "%Y-%m-%d %H:%M:%S",    # 2026-04-01 10:00:00
-    "%Y-%m-%d",              # 2026-04-01
-]
-
-def _try_parse_date_to_epoch_ms(val: str):
-    """Attempt to parse a date/datetime string to epoch milliseconds."""
-    for fmt in _DATE_FORMATS:
-        try:
-            dt = datetime.strptime(val, fmt)
-            return int(dt.timestamp() * 1000)
-        except ValueError:
-            continue
-    return None
-
 def _smart_cast(v: str):
     val = str(v).strip()
     if val.lower() == "true": return True
@@ -169,10 +153,6 @@ def _smart_cast(v: str):
         return int(val)
     except ValueError:
         pass
-    # Try date/datetime -> epoch ms conversion
-    epoch = _try_parse_date_to_epoch_ms(val)
-    if epoch is not None:
-        return epoch
     return val
 
 def row_to_payload(row: dict) -> dict:
@@ -221,9 +201,6 @@ def row_to_payload(row: dict) -> dict:
 def _norm(v) -> str:
     return str(v).strip().lower() if v is not None else ""
 
-def _ts_to_date(ms_value) -> str:
-    return datetime.fromtimestamp(ms_value / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
-
 def compare_dicts(expected, actual, path="") -> list[str]:
     diffs = []
     if isinstance(expected, dict):
@@ -245,9 +222,6 @@ def compare_dicts(expected, actual, path="") -> list[str]:
                 diffs.append(f"{path}[{i}]: no matching item found in response")
     else:
         actual_norm = _norm(actual)
-        if isinstance(actual, (int, float)) and any(x in path.lower() for x in ("date", "dob")):
-            try: actual_norm = _norm(_ts_to_date(actual))
-            except: pass
         if _norm(expected) != actual_norm:
             diffs.append(f"{path}: expected='{expected}' | actual='{actual_norm}'")
     return diffs
