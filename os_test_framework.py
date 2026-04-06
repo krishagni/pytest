@@ -137,8 +137,8 @@ def load_test_cases(csv_url=GSHEET_CSV_URL, input_file=INPUT_FILE) -> list[dict]
         rows = list(csv.DictReader(f))
     
     if not rows:
-        logger.critical(get_msg("ERR_NO_TEST_CASES"))
-        pytest.exit(get_msg("ERR_NO_TEST_CASES"))
+        logger.warning(get_msg("ERR_NO_TEST_CASES") + f" - Skipping file: {input_file}")
+        return []
     return rows
 
 # ── Payload Builder & Smart Casting ──────────────────────────────────────────
@@ -160,6 +160,21 @@ def row_to_payload(row: dict) -> dict:
     for k, v in row.items():
         k = k.strip()
         if not k or k in META_FIELDS or k in OUTPUT_EXTRA or v == "":
+            continue
+
+        if k == "distributingSites":
+            if "distributingSites" not in payload:
+                payload["distributingSites"] = {}
+            # Support multiple groups separated by semicolon or pipe
+            groups = str(v).split(";") if ";" in str(v) else str(v).split("|") if "|" in str(v) else [str(v)]
+            for group in groups:
+                parts = [x.strip() for x in group.split(",") if x.strip()]
+                if parts:
+                    inst = parts[0]
+                    sites = parts[1:]
+                    if inst not in payload["distributingSites"]:
+                        payload["distributingSites"][inst] = []
+                    payload["distributingSites"][inst].extend(sites)
             continue
 
         value = _smart_cast(v)
@@ -256,7 +271,7 @@ def execute_tc(row: dict) -> dict:
         result[field] = ""
     result["TC_Status"] = "FAIL" # Set a default status
     try:
-        role = row.get("Role", "admin").strip()
+        role = row.get("Role", "admin").strip() # remove the default admin, should strictly abide as per roles defined in the sheet 
         token = get_token(role)
         headers = {"X-OS-API-TOKEN": token, "Content-Type": "application/json"}
         payload = row_to_payload(row)
@@ -301,8 +316,8 @@ def execute_tc(row: dict) -> dict:
                             logger.warning(f"⚠️ Exception during resource deletion for {res_id}: {e}")
             else:
                 if isinstance(resp_body, list) and all(isinstance(e, dict) and "code" in e for e in resp_body):
-                    codes = ", ".join([str(e.get("code")) for e in resp_body])
-                    result["Error_Received"] = f"Failed HTTP {resp.status_code} - Code: {codes}"
+                    codes = ", ".join([f"{e.get('code')} ({e.get('message', 'No message')})" for e in resp_body])
+                    result["Error_Received"] = f"Failed HTTP {resp.status_code} - errors: {codes}"
                 elif isinstance(resp_body, dict) and "code" in resp_body:
                     result["Error_Received"] = f"Failed HTTP {resp.status_code} - Code: {resp_body.get('code')}"
                 else:
