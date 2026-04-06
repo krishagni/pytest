@@ -5,3 +5,5 @@ report.html
 *.log
 .pytest_cache/
 __pycache__/
+.env.test
+temp_test_data/
