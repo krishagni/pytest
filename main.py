@@ -57,7 +57,7 @@ def load_resource_registry() -> list[dict]:
             logger.warning(f"⚠️  Skipping row with missing api_path or gid: {row}")
             continue
 
-        api_url = f"{BASE_URL}/{api_path}".rstrip("/") + "/"
+        api_url = f"{BASE_URL}/{api_path}".rstrip("/")
         csv_url = (
             f"https://docs.google.com/spreadsheets/d/{MASTER_GSHEET_ID}"
             f"/export?format=csv&gid={gid}"
