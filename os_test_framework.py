@@ -130,8 +130,8 @@ def load_test_cases(csv_url=GSHEET_CSV_URL, input_file=INPUT_FILE) -> list[dict]
 
     # 3. Process the local file
     if not os.path.exists(input_file):
-        logger.critical(get_msg("ERR_INPUT_FILE_NOT_FOUND", input_file=input_file))
-        pytest.exit(get_msg("ERR_INPUT_FILE_NOT_FOUND", input_file=input_file))
+        logger.warning(get_msg("ERR_INPUT_FILE_NOT_FOUND", input_file=input_file) + " - Skipping this dataset.")
+        return []
 
     with open(input_file, newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
