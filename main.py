@@ -62,8 +62,14 @@ def load_resource_registry() -> list[dict]:
             f"https://docs.google.com/spreadsheets/d/{MASTER_GSHEET_ID}"
             f"/export?format=csv&gid={gid}"
         )
-        registry.append({"resource_name": name, "api_url": api_url, "csv_url": csv_url})
-        logger.info(f"✅  Registered resource '{name}': {api_url}")
+        items_url_template = row.get("validation_url", "").strip()
+        registry.append({
+            "resource_name": name,
+            "api_url": api_url,
+            "csv_url": csv_url,
+            "validation_url": items_url_template,
+        })
+        logger.info(f"✅  Registered resource '{name}': {api_url}" + (f" (items: {items_url_template})" if items_url_template else ""))
 
     if not registry:
         logger.critical("No enabled resources found in the summary sheet.")
@@ -100,7 +106,8 @@ def pytest_generate_tests(metafunc):
     for resource in get_resources():
         all_cases.extend(
             os_test_framework.run_tc(
-                resource["api_url"], resource["csv_url"], metafunc
+                resource["api_url"], resource["csv_url"], metafunc,
+                items_url_template=resource.get("validation_url", "")
             )
         )
 

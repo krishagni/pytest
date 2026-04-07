@@ -214,6 +214,13 @@ def row_to_payload(row: dict) -> dict:
 # ── Deep Validation ───────────────────────────────────────────────────────────
 
 def _norm(v) -> str:
+    if isinstance(v, (int, float)):
+        return str(float(v))
+    if isinstance(v, str):
+        try:
+            return str(float(v))
+        except ValueError:
+            pass
     return str(v).strip().lower() if v is not None else ""
 
 def compare_dicts(expected, actual, path="") -> list[str]:
@@ -241,7 +248,7 @@ def compare_dicts(expected, actual, path="") -> list[str]:
             diffs.append(f"{path}: expected='{expected}' | actual='{actual_norm}'")
     return diffs
 
-def deep_validate(res_id: int, expected_payload: dict, headers: dict, api_url: str, actual_response: Optional[dict] = None) -> tuple[str, str]:
+def deep_validate(res_id: int, expected_payload: dict, headers: dict, api_url: str, actual_response: Optional[dict] = None, items_url_template: str = "") -> tuple[str, str]:
     try:
         # Optimization: If the POST response already contains fields to validate, use it
         if actual_response and any(k in actual_response for k in expected_payload if k != "id"):
@@ -251,7 +258,38 @@ def deep_validate(res_id: int, expected_payload: dict, headers: dict, api_url: s
             resp = requests.get(validate_url, headers=headers, timeout=15)
             if not resp.ok: return "Fail", f"GET HTTP {resp.status_code}"
             resp_data = resp.json()
-            
+
+        # Determine effective items URL template: use sheet-configured one, or auto-detect
+        effective_template = items_url_template
+        if not effective_template:
+            # Auto-fallback: if expected_payload has any key ending in 'items' (e.g. orderItems),
+            # try the standard /items sub-endpoint pattern
+            items_key = next((k for k in expected_payload if k.lower().endswith("items")), None)
+            if items_key:
+                effective_template = f"{api_url.rstrip('/')}/{{id}}/items"
+                logger.warning(f"🔍 [DIAG] No items_url_template from sheet — auto-detected fallback for key '{items_key}'")
+
+        if effective_template:
+            items_url = effective_template.replace("{orderId}", str(res_id)).replace("{id}", str(res_id))
+            # Make absolute if the template is a relative path
+            if items_url.startswith("/"):
+                items_url = BASE_URL.rstrip("/") + items_url
+            logger.warning(f"🔍 [DIAG] Fetching sub-list from: {items_url}")
+            items_resp = requests.get(items_url, headers=headers, timeout=15)
+            logger.warning(f"🔍 [DIAG] Sub-list fetch status: {items_resp.status_code}")
+            if items_resp.ok:
+                segments = [s for s in effective_template.rstrip("/").split("/") if s and "{" not in s]
+                last_seg = segments[-1] if segments else "items"
+                matched_key = next(
+                    (k for k in expected_payload if k.lower().endswith(last_seg.lower())),
+                    last_seg
+                )
+                resp_data[matched_key] = items_resp.json()
+                logger.warning(f"🔍 [DIAG] Injected {len(items_resp.json())} items into key '{matched_key}'")
+                logger.info(f"📦 Fetched sub-list '{matched_key}' from: {items_url}")
+        else:
+            logger.warning(f"🔍 [DIAG] No items_url_template and no 'Items' key in payload — skipping sub-list fetch")
+
         diffs = compare_dicts(expected_payload, resp_data)
         return ("Pass", "") if not diffs else ("Fail", " | ".join(diffs))
     except Exception as exc:
@@ -261,6 +299,7 @@ def deep_validate(res_id: int, expected_payload: dict, headers: dict, api_url: s
 
 def execute_tc(row: dict) -> dict:
     api_url = row.pop("_api_url_", None)
+    items_url_template = row.pop("_items_url_template_", "")
     if not api_url:
         err_msg = get_msg("ERR_MISSING_API_URL")
         logger.error(err_msg)
@@ -298,7 +337,7 @@ def execute_tc(row: dict) -> dict:
                 res_id = resp_body.get("id") if isinstance(resp_body, dict) else None
                 if res_id:
                     # Optimized: Pass the POST response body to skip redundant GET if possible
-                    v_stat, v_diff = deep_validate(res_id, payload, headers, api_url, actual_response=resp_body if isinstance(resp_body, dict) else None)
+                    v_stat, v_diff = deep_validate(res_id, payload, headers, api_url, actual_response=resp_body if isinstance(resp_body, dict) else None, items_url_template=items_url_template)
                     result["Validation_Status"], result["Validation_Diff"] = v_stat, v_diff
                     if v_stat != "Pass": 
                         result["TC_Status"] = "FAIL"
@@ -362,13 +401,14 @@ def init_output_file():
             _header_initialized = True
 import hashlib
 
-def run_tc(api_url: str, csv_url: str, metafunc) -> list[dict]:
+def run_tc(api_url: str, csv_url: str, metafunc, items_url_template: str = "") -> list[dict]:
 
     if "tc_row" in metafunc.fixturenames:
         input_filename = f"input_{hashlib.md5(csv_url.encode()).hexdigest()[:8]}.csv" if csv_url else INPUT_FILE
         test_cases = load_test_cases(csv_url, input_filename)
         for tc in test_cases:
             tc["_api_url_"] = api_url
+            tc["_items_url_template_"] = items_url_template
         return test_cases
     return []
 
