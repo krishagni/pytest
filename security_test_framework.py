@@ -116,45 +116,26 @@ def load_security_cases() -> list[dict]:
 def load_tc_file(tc_id: str, file_info: str) -> dict | bytes | None:
     """
     Load the payload file for a TC from its dedicated folder.
-
-    Returns:
-      - dict  : for .json files
-      - bytes : for .csv files (bulk-import)
-      - None  : if file_info is blank (GET / DELETE with no body)
     """
     file_info = (file_info or "").strip()
     if not file_info:
         return None
 
     file_path = os.path.join(SECURITY_TC_DATA_DIR, tc_id, file_info)
-
     if not os.path.exists(file_path):
-        raise FileNotFoundError(
-            f"[{tc_id}] Expected payload file not found: {file_path}"
-        )
+        raise FileNotFoundError(f"[{tc_id}] File not found: {file_path}")
 
     _, ext = os.path.splitext(file_info.lower())
-
     if ext == ".json":
-        with open(file_path, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        logger.info(f"[{tc_id}] Loaded JSON from: {file_path}")
-        return data
-
-    if ext == ".csv":
-        with open(file_path, "rb") as fh:
-            data = fh.read()
-        logger.info(f"[{tc_id}] Loaded CSV bytes from: {file_path}")
-        return data
-
-    # Unknown extension — try JSON first, then raw bytes
-    logger.warning(f"[{tc_id}] Unknown file extension '{ext}', trying JSON...")
-    try:
+        # workflow.json must be sent as raw bytes to ensure bit-parity for uploads
+        if "workflow.json" in file_info.lower():
+            with open(file_path, "rb") as fh:
+                return fh.read()
         with open(file_path, "r", encoding="utf-8") as fh:
             return json.load(fh)
-    except Exception:
-        with open(file_path, "rb") as fh:
-            return fh.read()
+    
+    with open(file_path, "rb") as fh:
+        return fh.read()
 
 
 # ── Request Builder ───────────────────────────────────────────────────────────
@@ -184,13 +165,17 @@ def _dispatch_request(
     op      = operation.strip().upper()
     timeout = 20
 
-    if isinstance(payload, bytes):
+    # Simplified trigger: if the file name is workflow.json, use multipart (body: form)
+    if op == "POST" and "workflow.json" in file_info.lower():
         multipart_headers = {k: v for k, v in headers.items() if k != "Content-Type"}
-        files = {"file": (file_info, payload, "text/csv")}
-        if op == "POST":
-            return requests.post(url, headers=multipart_headers, files=files, timeout=timeout)
-        if op == "PUT":
-            return requests.put(url, headers=multipart_headers, files=files, timeout=timeout)
+        
+        # Ensure we send raw content (bytes or JSON string), NOT the string representation of bytes
+        content = json.dumps(payload) if isinstance(payload, dict) else payload
+        
+        # Using field 'file' and filename 'upload.json' as per user's successful JS fetch
+        files = {"file": ("upload.json", content, "application/json")}
+        logger.info(f"Using SMART-MULTIPART for workflow upload to {url}")
+        return requests.post(url, headers=multipart_headers, files=files, timeout=timeout)
 
     if op == "POST":
         return requests.post(url, headers=headers, json=payload, timeout=timeout)
@@ -264,7 +249,7 @@ def assert_security(
             if reflected:
                 return (
                     "FAIL",
-                    f"Server rejected (HTTP {response.status_code}) but REFLECTED malicious input in response body",
+                    f"Server rejected (HTTP {response.status_code}) but REFLECTED malicious input. Response: {response.text}",
                     True,
                 )
             return (
@@ -272,7 +257,7 @@ def assert_security(
                 f"Server correctly rejected malicious input (HTTP {response.status_code})",
                 False,
             )
-        msg = f"SECURITY VULNERABILITY: Server accepted malicious input (HTTP {response.status_code})"
+        msg = f"SECURITY VULNERABILITY: Server accepted malicious input (HTTP {response.status_code}). Response: {response.text}"
         if reflected:
             msg += " AND reflected it in the response (Reflected XSS risk)"
         return "FAIL", msg, reflected
@@ -282,7 +267,7 @@ def assert_security(
             return "PASS", f"Legitimate request accepted (HTTP {response.status_code})", False
         return (
             "FAIL",
-            f"Legitimate request unexpectedly rejected (HTTP {response.status_code})",
+            f"Legitimate request unexpectedly rejected (HTTP {response.status_code}). Response: {response.text}",
             False,
         )
 
@@ -300,7 +285,7 @@ def execute_security_tc(row: dict) -> dict:
     tc_id     = row.get("TC_ID", "UNKNOWN")
     operation = row.get("Operation", "POST")
     endpoint  = row.get("Endpoint", "")
-    file_info = row.get("File_Info", "")
+    file_info = row.get("File_info", "")
 
     result = {field: row.get(field, "") for field in SECURITY_META_FIELDS}
     for field in SECURITY_OUTPUT_EXTRA:
