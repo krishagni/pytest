@@ -7,3 +7,6 @@ report.html
 __pycache__/
 .env.test
 temp_test_data/
+security_tests/
+security_output_*.csv
+security_report.html
