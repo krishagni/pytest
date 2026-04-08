@@ -66,9 +66,12 @@ def get_auth_headers() -> dict:
 # ── Sheet Loader ──────────────────────────────────────────────────────────────
 
 def _resolve_security_url() -> str:
-
     if SECURITY_GSHEET_URL:
+        # Convert web UI links to CSV export links automatically
+        if "/edit" in SECURITY_GSHEET_URL:
+            return SECURITY_GSHEET_URL.split("/edit")[0] + "/export?format=csv"
         return SECURITY_GSHEET_URL
+
     if MASTER_GSHEET_ID and SECURITY_GSHEET_GID:
         return (
             f"https://docs.google.com/spreadsheets/d/{MASTER_GSHEET_ID}"
@@ -93,11 +96,14 @@ def load_security_cases() -> list[dict]:
     resp = requests.get(url, timeout=30)
     resp.raise_for_status()
 
+    # Use utf-8-sig to automatically drop the BOM (\ufeff) if Google includes it
+    resp.encoding = "utf-8-sig"
     reader = csv.DictReader(io.StringIO(resp.text))
     cases = []
     for row in reader:
-        normalised = {k.strip(): v.strip() for k, v in row.items() if k}
-        if not normalised.get("TC_ID", "").strip():
+        # normalise keys (strip whitespace, just in case)
+        normalised = {str(k).strip(): (v or "").strip() for k, v in row.items() if k}
+        if not normalised.get("TC_ID"):
             continue
         cases.append(normalised)
 
@@ -271,7 +277,7 @@ def assert_security(
             msg += " AND reflected it in the response (Reflected XSS risk)"
         return "FAIL", msg, reflected
 
-    if expected == "pass":
+    if exp == "pass":
         if response.ok:
             return "PASS", f"Legitimate request accepted (HTTP {response.status_code})", False
         return (
@@ -282,7 +288,7 @@ def assert_security(
 
     return (
         "ERROR",
-        f"Unknown Expected_Result value: '{expected}' (use 'pass' or 'fail')",
+        f"Unknown Expected_Result value: '{exp}' (use 'pass' or 'fail')",
         False,
     )
 
