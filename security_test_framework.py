@@ -256,7 +256,7 @@ def assert_security(
     Returns:
         (TC_Status, Security_Assertion_message, reflected_input_found)
     """
-    expected  = row.get("Expected_Result", "").strip().lower()
+    expected = str(row.get("Expected_Result") or row.get("Expected Results", "")).strip().lower()
     reflected = _check_reflection(payload, response.text or "")
 
     if expected == "fail":
@@ -277,7 +277,7 @@ def assert_security(
             msg += " AND reflected it in the response (Reflected XSS risk)"
         return "FAIL", msg, reflected
 
-    if exp == "pass":
+    if expected == "pass":
         if response.ok:
             return "PASS", f"Legitimate request accepted (HTTP {response.status_code})", False
         return (
@@ -288,7 +288,7 @@ def assert_security(
 
     return (
         "ERROR",
-        f"Unknown Expected_Result value: '{exp}' (use 'pass' or 'fail')",
+        f"Unknown Expected_Result value: '{expected}' (use 'pass' or 'fail')",
         False,
     )
 
