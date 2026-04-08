@@ -6,7 +6,6 @@ import logging
 import os
 import threading
 from datetime import datetime
-from typing import Optional
 
 import requests
 from dotenv import load_dotenv
@@ -25,7 +24,6 @@ SECURITY_GSHEET_URL  = os.getenv("SECURITY_GSHEET_URL", "")
 SECURITY_TC_DATA_DIR = os.getenv("SECURITY_TC_DATA_DIR", "security_tests/tc_data")
 MASTER_GSHEET_ID     = os.getenv("MASTER_GSHEET_ID", "")
 SECURITY_GSHEET_GID  = os.getenv("SECURITY_GSHEET_GID", "")
-ROLES_GSHEET_GID     = os.getenv("ROLES_GSHEET_GID", "")
 
 _env_sec_out         = os.getenv("SECURITY_OUTPUT_FILE", "security_output.csv")
 _base, _ext          = os.path.splitext(_env_sec_out)
@@ -34,77 +32,6 @@ SECURITY_OUTPUT_FILE = f"{_base}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{_ext
 # Output columns for the security results CSV
 SECURITY_META_FIELDS  = json.loads(os.environ["SECURITY_META_FIELDS"])
 SECURITY_OUTPUT_EXTRA = json.loads(os.environ["SECURITY_OUTPUT_EXTRA"])
-
-# ── Auth ──────────────────────────────────────────────────────────────────────
-
-_ROLES_CACHE: Optional[dict] = None
-_TOKEN_CACHE: dict = {}
-_token_lock = threading.Lock()
-
-
-def _load_roles() -> dict:
-    """Load credential roles from the Roles tab of the master GSheet."""
-    global _ROLES_CACHE
-    if _ROLES_CACHE is not None:
-        return _ROLES_CACHE
-
-    roles_url = (
-        f"https://docs.google.com/spreadsheets/d/{MASTER_GSHEET_ID}"
-        f"/export?format=csv&gid={ROLES_GSHEET_GID}"
-    )
-    try:
-        resp = requests.get(roles_url, timeout=30)
-        resp.raise_for_status()
-        reader = csv.DictReader(io.StringIO(resp.text))
-        roles = {}
-        for row in reader:
-            r = row.get("Role", "").strip().upper()
-            if r:
-                roles[r] = {
-                    "login":    row.get("Login_Name", "").strip(),
-                    "password": row.get("Password", "").strip(),
-                    "domain":   row.get("Domain_Name", "").strip(),
-                }
-        logger.info(f"Loaded {len(roles)} roles from GSheet")
-        _ROLES_CACHE = roles
-        return roles
-    except Exception as exc:
-        logger.warning(f"Failed to load roles: {exc}")
-        _ROLES_CACHE = {}
-        return {}
-
-
-def get_security_token(role: str = "admin") -> str:
-    """Return a cached auth token for `role`."""
-    key = role.upper().strip()
-    with _token_lock:
-        if key in _TOKEN_CACHE:
-            return _TOKEN_CACHE[key]
-
-    roles     = _load_roles()
-    creds     = roles.get(key, {})
-    login     = creds.get("login")
-    password  = creds.get("password")
-    domain    = creds.get("domain")
-
-    if not login or not password:
-        raise ValueError(
-            f"No credentials found for role '{role}'. "
-            "Check the Roles tab in your GSheet."
-        )
-
-    body = {"loginName": login, "password": password}
-    if domain:
-        body["domainName"] = domain
-
-    resp = requests.post(f"{BASE_URL}/sessions", json=body, timeout=10)
-    resp.raise_for_status()
-    token = resp.json()["token"]
-
-    with _token_lock:
-        _TOKEN_CACHE[key] = token
-    return token
-
 
 # ── Sheet Loader ──────────────────────────────────────────────────────────────
 
@@ -150,7 +77,7 @@ def load_security_cases() -> list[dict]:
 
 # ── File Loader (per-TC) ──────────────────────────────────────────────────────
 
-def load_tc_file(tc_id: str, file_info: str) -> Optional[dict | bytes]:
+def load_tc_file(tc_id: str, file_info: str) -> dict | bytes | None:
     """
     Load the payload file for a TC from its dedicated folder.
 
@@ -201,10 +128,6 @@ def _build_url(endpoint: str) -> str:
     if endpoint.startswith(("http://", "https://")):
         return endpoint
     return f"{BASE_URL}/{endpoint.lstrip('/')}"
-
-
-def _auth_headers(token: str) -> dict:
-    return {"X-OS-API-TOKEN": token, "Content-Type": "application/json"}
 
 
 def _dispatch_request(
@@ -342,7 +265,6 @@ def execute_security_tc(row: dict) -> dict:
     operation = row.get("Operation", "POST")
     endpoint  = row.get("Endpoint", "")
     file_info = row.get("File_Info", "")
-    role      = row.get("Role", "admin").strip()
 
     result = {field: row.get(field, "") for field in SECURITY_META_FIELDS}
     for field in SECURITY_OUTPUT_EXTRA:
@@ -350,16 +272,13 @@ def execute_security_tc(row: dict) -> dict:
     result["TC_Status"] = "ERROR"
 
     try:
-        token   = get_security_token(role)
-        headers = _auth_headers(token)
-
         payload = load_tc_file(tc_id, file_info)
 
         url = _build_url(endpoint)
         logger.info(f"[{tc_id}] {operation} -> {url}  (file: {file_info or 'none'})")
 
         t0         = datetime.now()
-        response   = _dispatch_request(operation, url, headers, payload, file_info)
+        response   = _dispatch_request(operation, url, {}, payload, file_info)
         latency_ms = int((datetime.now() - t0).total_seconds() * 1000)
 
         result["HTTP_Status_Code"] = response.status_code
