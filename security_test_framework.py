@@ -256,7 +256,7 @@ def assert_security(
     Returns:
         (TC_Status, Security_Assertion_message, reflected_input_found)
     """
-    expected = str(row.get("Expected_Result") or row.get("Expected Results", "")).strip().lower()
+    expected = str(row.get("Expected_Results", "")).strip().lower()
     reflected = _check_reflection(payload, response.text or "")
 
     if expected == "fail":
