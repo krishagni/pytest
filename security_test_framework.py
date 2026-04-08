@@ -33,6 +33,36 @@ SECURITY_OUTPUT_FILE = f"{_base}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{_ext
 SECURITY_META_FIELDS  = json.loads(os.environ["SECURITY_META_FIELDS"])
 SECURITY_OUTPUT_EXTRA = json.loads(os.environ["SECURITY_OUTPUT_EXTRA"])
 
+# ── Auth ──────────────────────────────────────────────────────────────────────
+
+OS_LOGIN_NAME  = os.getenv("OS_LOGIN_NAME", "")
+OS_PASSWORD    = os.getenv("OS_PASSWORD", "")
+OS_DOMAIN_NAME = os.getenv("OS_DOMAIN_NAME", "")
+
+_API_TOKEN   = None
+_token_lock  = threading.Lock()
+
+
+def get_auth_headers() -> dict:
+    """Fetch and cache the API token using credentials from .env."""
+    global _API_TOKEN
+    with _token_lock:
+        if _API_TOKEN is not None:
+            return {"X-OS-API-TOKEN": _API_TOKEN, "Content-Type": "application/json"}
+
+    if not OS_LOGIN_NAME or not OS_PASSWORD:
+        raise ValueError("Missing OS_LOGIN_NAME or OS_PASSWORD in .env!")
+
+    body = {"loginName": OS_LOGIN_NAME, "password": OS_PASSWORD}
+    if OS_DOMAIN_NAME:
+        body["domainName"] = OS_DOMAIN_NAME
+
+    resp = requests.post(f"{BASE_URL}/sessions", json=body, timeout=10)
+    resp.raise_for_status()
+    _API_TOKEN = resp.json()["token"]
+
+    return {"X-OS-API-TOKEN": _API_TOKEN, "Content-Type": "application/json"}
+
 # ── Sheet Loader ──────────────────────────────────────────────────────────────
 
 def _resolve_security_url() -> str:
@@ -278,7 +308,8 @@ def execute_security_tc(row: dict) -> dict:
         logger.info(f"[{tc_id}] {operation} -> {url}  (file: {file_info or 'none'})")
 
         t0         = datetime.now()
-        response   = _dispatch_request(operation, url, {}, payload, file_info)
+        headers    = get_auth_headers()
+        response   = _dispatch_request(operation, url, headers, payload, file_info)
         latency_ms = int((datetime.now() - t0).total_seconds() * 1000)
 
         result["HTTP_Status_Code"] = response.status_code
