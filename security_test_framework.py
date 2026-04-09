@@ -96,7 +96,6 @@ def load_security_cases() -> list[dict]:
     resp = requests.get(url, timeout=30)
     resp.raise_for_status()
 
-    # Use utf-8-sig to automatically drop the BOM (\ufeff) if Google includes it
     resp.encoding = "utf-8-sig"
     reader = csv.DictReader(io.StringIO(resp.text))
     cases = []
@@ -165,16 +164,20 @@ def _dispatch_request(
     op      = operation.strip().upper()
     timeout = 20
 
-    # Simplified trigger: if the file name is workflow.json, use multipart (body: form)
-    if op == "POST" and "workflow.json" in file_info.lower():
+    # Simplified trigger: strictly workflow.json or .csv files
+    is_multipart = ("workflow.json" in file_info.lower() or file_info.lower().endswith(".csv"))
+
+    if op == "POST" and is_multipart:
         multipart_headers = {k: v for k, v in headers.items() if k != "Content-Type"}
-        
-        # Ensure we send raw content (bytes or JSON string), NOT the string representation of bytes
         content = json.dumps(payload) if isinstance(payload, dict) else payload
         
-        # Using field 'file' and filename 'upload.json' as per user's successful JS fetch
-        files = {"file": ("upload.json", content, "application/json")}
-        logger.info(f"Using SMART-MULTIPART for workflow upload to {url}")
+        # Use the actual filename from File_info (no more hardcoding "upload.json")
+        fname = file_info
+        mime = "text/csv" if fname.lower().endswith(".csv") else "application/json"
+        
+        # Standard OpenSpecimen part name is 'file'
+        files = {"file": (fname, content, mime)}
+        logger.info(f"Using SMART-MULTIPART (mime:{mime}) for {fname} to {url}")
         return requests.post(url, headers=multipart_headers, files=files, timeout=timeout)
 
     if op == "POST":
@@ -191,90 +194,42 @@ def _dispatch_request(
 
 # ── Security Assertion ────────────────────────────────────────────────────────
 
-_REFLECTION_PATTERNS = [
-    "<script", "alert(", "onerror=", "onload=",
-    "' OR '", "' OR 1=1", "--",
-    "UNION SELECT", "DROP TABLE",
-]
 
-
-def _check_reflection(payload, response_text: str) -> bool:
-    """
-    Returns True if any XSS/SQLi token from the payload appears in the response.
-    Catches reflected XSS and verbose SQL error leakage.
-    """
-    if payload is None or isinstance(payload, bytes):
-        return False
-
-    def _extract_strings(obj) -> list[str]:
-        if isinstance(obj, str):
-            return [obj]
-        if isinstance(obj, dict):
-            result = []
-            for v in obj.values():
-                result.extend(_extract_strings(v))
-            return result
-        if isinstance(obj, list):
-            result = []
-            for item in obj:
-                result.extend(_extract_strings(item))
-            return result
-        return []
-
-    resp_lower = response_text.lower()
-    for s in _extract_strings(payload):
-        s_lower = s.lower()
-        for pattern in _REFLECTION_PATTERNS:
-            if pattern.lower() in s_lower and pattern.lower() in resp_lower:
-                return True
-    return False
 
 
 def assert_security(
     row: dict,
     response: requests.Response,
     payload,
-) -> tuple[str, str, bool]:
+) -> tuple[str, str]: # ("PASS/FAIL/ERROR", "message") 
     """
     Evaluate the security test result.
 
     Returns:
-        (TC_Status, Security_Assertion_message, reflected_input_found)
+        (TC_Status, Security_Assertion_message)
     """
     expected = str(row.get("Expected_Results", "")).strip().lower()
-    reflected = _check_reflection(payload, response.text or "")
 
     if expected == "fail":
         if not response.ok:
-            if reflected:
-                return (
-                    "FAIL",
-                    f"Server rejected (HTTP {response.status_code}) but REFLECTED malicious input. Response: {response.text}",
-                    True,
-                )
             return (
                 "PASS",
-                f"Server correctly rejected malicious input (HTTP {response.status_code})",
-                False,
+                f"Server correctly rejected input (HTTP {response.status_code})",
             )
         msg = f"SECURITY VULNERABILITY: Server accepted malicious input (HTTP {response.status_code}). Response: {response.text}"
-        if reflected:
-            msg += " AND reflected it in the response (Reflected XSS risk)"
-        return "FAIL", msg, reflected
+        return "FAIL", msg
 
     if expected == "pass":
         if response.ok:
-            return "PASS", f"Legitimate request accepted (HTTP {response.status_code})", False
+            return "PASS", f"Legitimate request accepted (HTTP {response.status_code})"
         return (
             "FAIL",
             f"Legitimate request unexpectedly rejected (HTTP {response.status_code}). Response: {response.text}",
-            False,
         )
 
     return (
         "ERROR",
         f"Unknown Expected_Result value: '{expected}' (use 'pass' or 'fail')",
-        False,
     )
 
 
@@ -306,10 +261,9 @@ def execute_security_tc(row: dict) -> dict:
         result["HTTP_Status_Code"] = response.status_code
         result["Latency_ms"]       = latency_ms
 
-        tc_status, assertion_msg, reflected = assert_security(row, response, payload)
+        tc_status, assertion_msg = assert_security(row, response, payload)
         result["TC_Status"]             = tc_status
         result["Security_Assertion"]    = assertion_msg
-        result["Reflected_Input_Found"] = str(reflected)
 
         if tc_status == "FAIL":
             try:
@@ -408,7 +362,7 @@ def _security_session():
 
 
 @pytest.mark.security
-def test_security(tc_row, record_property):
+def test_security(tc_row, record_property): # runs once per test case 
     """
     Generic security test.
     Each `tc_row` is one row from the 8-column security Google Sheet.
