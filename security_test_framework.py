@@ -189,8 +189,7 @@ def _dispatch_request(
     if op == "DELETE":
         return requests.delete(url, headers=headers, timeout=timeout)
 
-    raise ValueError(f"Unsupported operation: '{operation}'")
-
+    raise ValueError(f"Unsupported operation: '{operation}'") 
 
 # ── Security Assertion ────────────────────────────────────────────────────────
 
@@ -250,12 +249,33 @@ def execute_security_tc(row: dict) -> dict:
     try:
         payload = load_tc_file(tc_id, file_info)
 
-        url = _build_url(endpoint)
-        logger.info(f"[{tc_id}] {operation} -> {url}  (file: {file_info or 'none'})")
+        url     = _build_url(endpoint)
+        headers = get_auth_headers()
 
-        t0         = datetime.now()
-        headers    = get_auth_headers()
-        response   = _dispatch_request(operation, url, headers, payload, file_info)
+        if file_info.lower().endswith(".csv"):
+            # ── Two-step bulk import ────────────────────────────────────────
+            # Step 1: Upload the CSV file, extract fileId from response
+            file_bytes  = load_tc_file(tc_id, file_info)
+            upload_resp = _dispatch_request("POST", url, headers, file_bytes, file_info)
+            file_id     = upload_resp.json().get("fileId")
+            logger.info(f"[{tc_id}] CSV upload → fileId={file_id}")
+
+            # Step 2: POST job payload to parent endpoint (strip last segment)
+            payload    = load_tc_file(tc_id, "payload.json")
+            job_str    = json.dumps(payload).replace("{file_id}", str(file_id))
+            payload    = json.loads(job_str)
+            job_url    = _build_url(endpoint.rsplit("/", 1)[0])
+            logger.info(f"[{tc_id}] Creating import job at {job_url}")
+
+            t0       = datetime.now()
+            response = _dispatch_request("POST", job_url, headers, payload, "payload.json")
+        else:
+            # ── Default: single-step ────────────────────────────────────────
+            payload  = load_tc_file(tc_id, file_info)
+            logger.info(f"[{tc_id}] {operation} -> {url}  (file: {file_info or 'none'})")
+            t0       = datetime.now()
+            response = _dispatch_request(operation, url, headers, payload, file_info)
+
         latency_ms = int((datetime.now() - t0).total_seconds() * 1000)
 
         result["HTTP_Status_Code"] = response.status_code
