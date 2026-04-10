@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import threading
+import time
 from datetime import datetime
 
 import requests
@@ -22,8 +23,7 @@ load_dotenv(env_file)
 BASE_URL             = os.getenv("OS_BASE_URL", "").rstrip("/")
 SECURITY_GSHEET_URL  = os.getenv("SECURITY_GSHEET_URL", "")
 SECURITY_TC_DATA_DIR = os.getenv("SECURITY_TC_DATA_DIR", "security_tests/tc_data")
-MASTER_GSHEET_ID     = os.getenv("MASTER_GSHEET_ID", "")
-SECURITY_GSHEET_GID  = os.getenv("SECURITY_GSHEET_GID", "")
+
 
 _env_sec_out         = os.getenv("SECURITY_OUTPUT_FILE", "security_output.csv")
 _base, _ext          = os.path.splitext(_env_sec_out)
@@ -44,7 +44,6 @@ _token_lock  = threading.Lock()
 
 
 def get_auth_headers() -> dict:
-    """Fetch and cache the API token using credentials from .env."""
     global _API_TOKEN
     with _token_lock:
         if _API_TOKEN is not None:
@@ -71,13 +70,8 @@ def _resolve_security_url() -> str:
         if "/edit" in SECURITY_GSHEET_URL:
             return SECURITY_GSHEET_URL.split("/edit")[0] + "/export?format=csv"
         return SECURITY_GSHEET_URL
-
-    if MASTER_GSHEET_ID and SECURITY_GSHEET_GID:
-        return (
-            f"https://docs.google.com/spreadsheets/d/{MASTER_GSHEET_ID}"
-            f"/export?format=csv&gid={SECURITY_GSHEET_GID}"
-        )
     return ""
+
 
 
 def load_security_cases() -> list[dict]:
@@ -88,9 +82,9 @@ def load_security_cases() -> list[dict]:
     url = _resolve_security_url()
     if not url:
         raise EnvironmentError(
-            "No security sheet configured. Set SECURITY_GSHEET_URL "
-            "or MASTER_GSHEET_ID + SECURITY_GSHEET_GID in .env"
+            "No security sheet configured. Set SECURITY_GSHEET_URL in .env"
         )
+
 
     logger.info(f"Downloading security sheet from: {url}")
     resp = requests.get(url, timeout=30)
@@ -126,7 +120,6 @@ def load_tc_file(tc_id: str, file_info: str) -> dict | bytes | None:
 
     _, ext = os.path.splitext(file_info.lower())
     if ext == ".json":
-        # workflow.json must be sent as raw bytes to ensure bit-parity for uploads
         if "workflow.json" in file_info.lower():
             with open(file_path, "rb") as fh:
                 return fh.read()
@@ -192,10 +185,6 @@ def _dispatch_request(
     raise ValueError(f"Unsupported operation: '{operation}'") 
 
 # ── Security Assertion ────────────────────────────────────────────────────────
-
-
-
-
 def assert_security(
     row: dict,
     response: requests.Response,
@@ -269,6 +258,44 @@ def execute_security_tc(row: dict) -> dict:
 
             t0       = datetime.now()
             response = _dispatch_request("POST", job_url, headers, payload, "payload.json")
+
+            if response.ok:
+                try:
+                    job_data = response.json()
+                    job_id = job_data.get("id")
+                    if job_id:
+                        job_status_url = f"{BASE_URL}/import-jobs/{job_id}"
+                        logger.info(f"[{tc_id}] Polling import job {job_id} at {job_status_url}...")
+                        
+                        timeout = 60
+                        start_time = time.time()
+                        final_status = "UNKNOWN"
+                        job_info = {}
+                        
+                        while time.time() - start_time < timeout:
+                            status_resp = requests.get(job_status_url, headers=headers, timeout=10)
+                            if status_resp.ok:
+                                job_info = status_resp.json()
+                                status = job_info.get("status")
+                                if status in ("COMPLETED", "FAILED", "STOPPED"):
+                                    final_status = status
+                                    break
+                            time.sleep(2)
+                        
+                        logger.info(f"[{tc_id}] Import job {job_id} finished with status: {final_status}")
+                        
+                        # Adjust response so assert_security works correctly
+                        if final_status == "FAILED":
+                            response.status_code = 400
+                            response._content = json.dumps(job_info).encode("utf-8")
+                        elif final_status == "COMPLETED":
+                            response.status_code = 200
+                            response._content = json.dumps(job_info).encode("utf-8")
+                        else:
+                            response.status_code = 500
+                            response._content = json.dumps({"error": f"Job status {final_status} timeout", **job_info}).encode("utf-8")
+                except Exception as e:
+                    logger.warning(f"[{tc_id}] Failed to poll job status: {e}")
         else:
             # ── Default: single-step ────────────────────────────────────────
             payload  = load_tc_file(tc_id, file_info)
