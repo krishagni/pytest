@@ -94,7 +94,7 @@ def row_to_payload(row: dict) -> dict:
     payload = {}
     for k, v in row.items():
         k = k.strip()
-        if not k or k in META_FIELDS or k in OUTPUT_EXTRA or v == "":
+        if not k or k in META_FIELDS or k in OUTPUT_EXTRA or k == "id" or v == "":
             continue
 
         if k == "distributingSites":
@@ -250,8 +250,23 @@ def execute_tc(row: dict) -> dict:
         headers = {"X-OS-API-TOKEN": token, "Content-Type": "application/json"}
         payload = row_to_payload(row)
 
+        operation = row.get("Operation", "POST").strip().upper()
+        res_id_input = str(row.get("id", "")).strip()
+
+        if operation in ("PUT", "DELETE") and res_id_input:
+            url = f"{api_url.rstrip('/')}/{res_id_input}"
+        else:
+            url = api_url
+
         t0 = datetime.now()
-        resp = requests.post(api_url, headers=headers, json=payload, timeout=15)
+        if operation == "POST":
+            resp = requests.post(url, headers=headers, json=payload, timeout=15)
+        elif operation == "PUT":
+            resp = requests.put(url, headers=headers, json=payload, timeout=15)
+        elif operation == "DELETE":
+            resp = requests.delete(url, headers=headers, timeout=15)
+        else:
+            raise ValueError(f"Unsupported operation: {operation}")
         
         result["Latency_ms"] = int((datetime.now() - t0).total_seconds() * 1000)
         result["HTTP_Status_Code"] = resp.status_code
@@ -269,25 +284,29 @@ def execute_tc(row: dict) -> dict:
         if is_positive:
             if resp.ok:
                 result["TC_Status"] = "PASS"
-                res_id = resp_body.get("id") if isinstance(resp_body, dict) else None
-                if res_id:
-                    # Optimized: Pass the POST response body to skip redundant GET if possible
-                    v_stat, v_diff = deep_validate(res_id, payload, headers, api_url, actual_response=resp_body if isinstance(resp_body, dict) else None, items_url_template=items_url_template)
-                    result["Validation_Status"], result["Validation_Diff"] = v_stat, v_diff
-                    if v_stat != "Pass": 
-                        result["TC_Status"] = "FAIL"
-                    
-                    # Teardown / Cleanup
-                    if CLEANUP_RESOURCES:
-                        try:
-                            delete_url = f"{api_url.rstrip('/')}/{res_id}?forceDelete=true"
-                            del_resp = requests.delete(delete_url, headers=headers, timeout=15)
-                            if not del_resp.ok:
-                                logger.warning(f"⚠️ Failed to delete resource at {delete_url}: HTTP {del_resp.status_code} - {del_resp.text}")
-                            else:
-                                logger.info(f"🗑️ Successfully deleted resource: {res_id}")
-                        except Exception as e:
-                            logger.warning(f"⚠️ Exception during resource deletion for {res_id}: {e}")
+                if operation != "DELETE":
+                    res_id = resp_body.get("id") if isinstance(resp_body, dict) else None
+                    if not res_id and res_id_input:
+                        res_id = res_id_input
+
+                    if res_id:
+                        # Optimized: Pass the POST response body to skip redundant GET if possible
+                        v_stat, v_diff = deep_validate(res_id, payload, headers, api_url, actual_response=resp_body if isinstance(resp_body, dict) else None, items_url_template=items_url_template)
+                        result["Validation_Status"], result["Validation_Diff"] = v_stat, v_diff
+                        if v_stat != "Pass": 
+                            result["TC_Status"] = "FAIL"
+                        
+                        # Teardown / Cleanup
+                        if CLEANUP_RESOURCES and operation != "GET":
+                            try:
+                                delete_url = f"{api_url.rstrip('/')}/{res_id}?forceDelete=true"
+                                del_resp = requests.delete(delete_url, headers=headers, timeout=15)
+                                if not del_resp.ok:
+                                    logger.warning(f"⚠️ Failed to delete resource at {delete_url}: HTTP {del_resp.status_code} - {del_resp.text}")
+                                else:
+                                    logger.info(f"🗑️ Successfully deleted resource: {res_id}")
+                            except Exception as e:
+                                logger.warning(f"⚠️ Exception during resource deletion for {res_id}: {e}")
             else:
                 if isinstance(resp_body, list) and all(isinstance(e, dict) and "code" in e for e in resp_body):
                     codes = ", ".join([f"{e.get('code')} ({e.get('message', 'No message')})" for e in resp_body])
