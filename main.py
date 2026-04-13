@@ -1,22 +1,15 @@
 import csv
 import io
-import logging
 import os
-
 import pytest
 import requests
-from dotenv import load_dotenv
+
+from utilities import logger, BASE_URL
 
 import os_test_framework
+import security_test_framework
 
-env_file = os.getenv("ENV_FILE", ".env")
-load_dotenv(env_file)
-
-logger = logging.getLogger(__name__)
-
-BASE_URL           = os.getenv("OS_BASE_URL", "").rstrip("/")
 MASTER_GSHEET_ID   = os.getenv("MASTER_GSHEET_ID", "")
-
 MASTER_GSHEET_SUMMARY_GID = os.getenv("MASTER_GSHEET_SUMMARY_GID", "")
 
 # ── Summary-sheet URL ─────────────────────────────────────────────────────────
@@ -28,7 +21,6 @@ _SUMMARY_EXPORT_URL = (
 # ── Registry loader ────────────────────────────────────────────────────────────
 
 def load_resource_registry() -> list[dict]:
-
     if not MASTER_GSHEET_ID:
         logger.critical("MASTER_GSHEET_ID is not set in .env — cannot load resource registry.")
         pytest.exit("MASTER_GSHEET_ID missing from .env")
@@ -77,7 +69,6 @@ def load_resource_registry() -> list[dict]:
 
     return registry
 
-
 # ── Cached registry (loaded once per session) ──────────────────────────────────
 _RESOURCES: list[dict] | None = None
 
@@ -88,37 +79,22 @@ def get_resources() -> list[dict]:
     return _RESOURCES
 
 
-# ── pytest hooks ──────────────────────────────────────────────────────────────
+# ── Tests ──────────────────────────────────────────────────────────────
 
+@pytest.mark.security
+def test_security(sec_tc_row, record_property):
+    """Executes the security test scenarios."""
+    result = security_test_framework.execute_security_tc(sec_tc_row)
+    security_test_framework.write_security_result(result)
 
-@pytest.fixture(scope="session", autouse=True)
-def save_combined_results():
-    """Clean up temp data after all tests run."""
-    yield
-    os_test_framework.cleanup_temp_data()
+    for field in security_test_framework.SECURITY_OUTPUT_EXTRA:
+        record_property(field, str(result.get(field, "")))
 
+    if result["TC_Status"] != "PASS":
+        tc_id   = sec_tc_row.get("TC_ID", "?")
+        details = result.get("Security_Assertion") or result.get("Error_Details") or "No details"
+        pytest.fail(f"[{tc_id}] {details}", pytrace=False)
 
-def pytest_generate_tests(metafunc):
-    if "tc_row" not in metafunc.fixturenames:
-        return
-
-    all_cases = []
-    for resource in get_resources():
-        all_cases.extend(
-            os_test_framework.run_tc(
-                resource["api_url"], resource["csv_url"], metafunc,
-                items_url_template=resource.get("validation_url", "")
-            )
-        )
-
-    if all_cases:
-        metafunc.parametrize(
-            "tc_row",
-            all_cases,
-            ids=[f"{r.get('TC_ID', 'TC')}" for r in all_cases],
-        )
-
-
-def test_resource(tc_row, record_property):
-    """Generic test executing the payload against the dynamic URL."""
-    os_test_framework.execute_and_record_test(tc_row, record_property)
+def test_resource(os_tc_row, record_property):
+    """Generic test executing the payload against the dynamic URL for primary scenarios."""
+    os_test_framework.execute_and_record_test(os_tc_row, record_property)

@@ -1,19 +1,7 @@
 import os, csv, json, pytest, requests, functools, logging, threading, io
 from datetime import datetime
 from typing import Optional
-from dotenv import load_dotenv
-
-# Setup Logging
-logging.basicConfig(
-    level=logging.INFO, 
-    format="%(asctime)s [%(levelname)s] %(message)s", 
-    datefmt="%Y-%m-%d %H:%M:%S"
-)
-logger = logging.getLogger(__name__)
-
-# Load environment variables
-env_file = os.getenv("ENV_FILE", ".env")
-load_dotenv(env_file)
+from utilities import logger, BASE_URL, get_token, CSVLogger
 
 # Load externalized messages
 MSG_FILE = os.path.join(os.path.dirname(__file__), "messages.json")
@@ -24,7 +12,6 @@ def get_msg(msg_id, **kwargs):
     return MESSAGES.get(msg_id, msg_id).format(**kwargs)
 
 # ── Config ────────────────────────────────────────────────────────────────────
-BASE_URL            = os.getenv("OS_BASE_URL")
 GSHEET_CSV_URL      = os.getenv("GSHEET_CSV_URL")
 INPUT_FILE          = os.getenv("INPUT_FILE", "input_data.csv")
 SAVE_SNAPSHOT       = os.getenv("SAVE_INPUT_SNAPSHOT", "false").lower() == "true"
@@ -38,58 +25,6 @@ OUTPUT_FILE         = f"{_base}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{_ext}
 
 META_FIELDS  = json.loads(os.environ["META_FIELDS"])
 OUTPUT_EXTRA = json.loads(os.environ["OUTPUT_EXTRA"])
-
-# ── Auth ──────────────────────────────────────────────────────────────────────
-
-_ROLES_CACHE = None
-
-def load_roles_from_gsheet() -> dict:
-    master_id = os.getenv("MASTER_GSHEET_ID")
-    roles_gid = os.getenv("ROLES_GSHEET_GID")
-    if not master_id or not roles_gid:
-        return {}
-    url = f"https://docs.google.com/spreadsheets/d/{master_id}/export?format=csv&gid={roles_gid}"
-    try:
-        resp = requests.get(url, timeout=30)
-        resp.raise_for_status()
-        reader = csv.DictReader(io.StringIO(resp.text))
-        roles = {}
-        for row in reader:
-            r = row.get("Role", "").strip().upper()
-            if r:
-                roles[r] = {
-                    "login": row.get("Login_Name", "").strip(),
-                    "password": row.get("Password", "").strip(),
-                    "domain": row.get("Domain_Name", "").strip()
-                }
-        logger.info(f"🔑 Loaded {len(roles)} roles from GSheet")
-        return roles
-    except Exception as e:
-        logger.warning(f"Failed to load roles from GSheet: {e}")
-        return {}
-
-@functools.lru_cache(maxsize=10)
-def get_token(role: str) -> str:
-    global _ROLES_CACHE
-    if _ROLES_CACHE is None:
-        _ROLES_CACHE = load_roles_from_gsheet()
-
-    key = role.upper().strip()
-    gsheet_role = _ROLES_CACHE.get(key, {})
-    
-    login  = gsheet_role.get("login")
-    pwd    = gsheet_role.get("password")
-    domain = gsheet_role.get("domain")
-
-    if not login or not pwd:
-        raise ValueError(get_msg("ERR_CREDENTIALS_MISSING", role=role))
-
-    creds = {"loginName": login, "password": pwd}
-    if domain: creds["domainName"] = domain
-
-    resp = requests.post(f"{BASE_URL}/sessions", json=creds, timeout=10)
-    resp.raise_for_status()
-    return resp.json()["token"]
 
 # ── Data Loading (Now Saves Locally First) ────────────────────────────────────
 
@@ -386,24 +321,13 @@ def execute_tc(row: dict) -> dict:
 
 # ── Integration & Export ──────────────────────────────────────────────────────
 
-_csv_lock = threading.Lock()
-_header_initialized = False
+_os_logger = CSVLogger(OUTPUT_FILE, META_FIELDS + OUTPUT_EXTRA)
 
-def init_output_file():
-    """Initializes the output CSV with headers if it doesn't already exist."""
-    global _header_initialized
-    with _csv_lock:
-        if not _header_initialized:
-            cols = META_FIELDS + OUTPUT_EXTRA
-            with open(OUTPUT_FILE, "w", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
-                writer.writeheader()
-            _header_initialized = True
 import hashlib
 
 def run_tc(api_url: str, csv_url: str, metafunc, items_url_template: str = "") -> list[dict]:
 
-    if "tc_row" in metafunc.fixturenames:
+    if "os_tc_row" in metafunc.fixturenames:
         input_filename = f"input_{hashlib.md5(csv_url.encode()).hexdigest()[:8]}.csv" if csv_url else INPUT_FILE
         test_cases = load_test_cases(csv_url, input_filename)
         for tc in test_cases:
@@ -417,12 +341,7 @@ def execute_and_record_test(tc_row, record_property):
     res = execute_tc(tc_row)
     
     # Streaming Write to CSV
-    init_output_file()
-    cols = META_FIELDS + OUTPUT_EXTRA
-    with _csv_lock:
-        with open(OUTPUT_FILE, "a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
-            writer.writerow(res)
+    _os_logger.write_row(res)
 
     for field in OUTPUT_EXTRA:
         record_property(field, str(res.get(field, "")))
