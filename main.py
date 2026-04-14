@@ -15,7 +15,7 @@ MASTER_GSHEET_SUMMARY_GID = os.getenv("MASTER_GSHEET_SUMMARY_GID", "")
 # ── Summary-sheet URL ─────────────────────────────────────────────────────────
 _SUMMARY_EXPORT_URL = (
     f"https://docs.google.com/spreadsheets/d/{MASTER_GSHEET_ID}"
-    f"/export?format=csv&gid={MASTER_GSHEET_SUMMARY_GID}"
+    f"/export?format=csv&gid={MASTER_GSHEET_SUMMARY_GID}" 
 )
 
 # ── Registry loader ────────────────────────────────────────────────────────────
@@ -84,16 +84,7 @@ def get_resources() -> list[dict]:
 @pytest.mark.security
 def test_security(sec_tc_row, record_property):
     """Executes the security test scenarios."""
-    result = security_test_framework.execute_security_tc(sec_tc_row)
-    security_test_framework.write_security_result(result)
-
-    for field in security_test_framework.SECURITY_OUTPUT_EXTRA:
-        record_property(field, str(result.get(field, "")))
-
-    if result["TC_Status"] != "PASS":
-        tc_id   = sec_tc_row.get("TC_ID", "?")
-        details = result.get("Security_Assertion") or result.get("Error_Details") or "No details"
-        pytest.fail(f"[{tc_id}] {details}", pytrace=False)
+    security_test_framework.execute_and_record_security_test(sec_tc_row, record_property)
 
 def test_resource(os_tc_row, record_property):
     """Generic test executing the payload against the dynamic URL for primary scenarios."""

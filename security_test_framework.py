@@ -273,3 +273,17 @@ _sec_logger = CSVLogger(SECURITY_OUTPUT_FILE, SECURITY_META_FIELDS + SECURITY_OU
 
 def write_security_result(result: dict):
     _sec_logger.write_row(result)
+
+def execute_and_record_security_test(row: dict, record_property):
+    """Refactored helper to execute, log, and fail security tests."""
+    import pytest
+    result = execute_security_tc(row)
+    write_security_result(result)
+
+    for field in SECURITY_OUTPUT_EXTRA:
+        record_property(field, str(result.get(field, "")))
+
+    if result["TC_Status"] != "PASS":
+        tc_id   = row.get("TC_ID", "?")
+        details = result.get("Security_Assertion") or result.get("Error_Details") or "No details"
+        pytest.fail(f"[{tc_id}] {details}", pytrace=False)
