@@ -3,3 +3,4 @@ pytest-html==4.2.0
 requests
 python-dotenv
 pandas
+gdown

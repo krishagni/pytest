@@ -18,6 +18,7 @@ SAVE_SNAPSHOT       = os.getenv("SAVE_INPUT_SNAPSHOT", "false").lower() == "true
 SNAPSHOT_DIR        = os.getenv("SNAPSHOT_DIR", "input_snapshots")
 DATA_DIR            = os.getenv("DATA_DIR", "temp_test_data")
 CLEANUP_RESOURCES   = os.getenv("CLEANUP_RESOURCES", "true").lower() == "true"
+REVERT_UPDATES      = os.getenv("REVERT_UPDATES", "true").lower() == "true"
 
 _env_output         = os.getenv("OUTPUT_FILE", "output_results.csv")
 _base, _ext         = os.path.splitext(_env_output)
@@ -258,6 +259,26 @@ def execute_tc(row: dict) -> dict:
         else:
             url = api_url
 
+        logger.warning(f"🔍 [TC_DEBUG] TC_ID={row.get('TC_ID')} | Operation='{operation}' | id='{res_id_input}' | URL={url}")
+
+        original_state = None
+        if operation == "PUT" and res_id_input:
+            try:
+                pre_resp = requests.get(url, headers=headers, timeout=15)
+                if pre_resp.ok:
+                    original_state = pre_resp.json()
+            except Exception as e:
+                logger.warning(f"⚠️ Could not fetch original state for {res_id_input}: {e}")
+
+        # --- AUTO-FETCH PARTICIPANT ID (IF MISSING) ---
+        if original_state and isinstance(original_state, dict):
+            if "participant" in payload and isinstance(payload["participant"], dict):
+                if "id" not in payload["participant"]:
+                    orig_participant = original_state.get("participant")
+                    if isinstance(orig_participant, dict) and "id" in orig_participant:
+                        payload["participant"]["id"] = orig_participant["id"]
+                        logger.info(f"Auto-fetched participant.id = {orig_participant['id']} from state for Registration {res_id_input}")
+
         t0 = datetime.now()
         if operation == "POST":
             resp = requests.post(url, headers=headers, json=payload, timeout=15)
@@ -297,7 +318,7 @@ def execute_tc(row: dict) -> dict:
                             result["TC_Status"] = "FAIL"
                         
                         # Teardown / Cleanup
-                        if CLEANUP_RESOURCES and operation != "GET":
+                        if operation == "POST" and CLEANUP_RESOURCES:
                             try:
                                 delete_url = f"{api_url.rstrip('/')}/{res_id}?forceDelete=true"
                                 del_resp = requests.delete(delete_url, headers=headers, timeout=15)
@@ -307,6 +328,15 @@ def execute_tc(row: dict) -> dict:
                                     logger.info(f"🗑️ Successfully deleted resource: {res_id}")
                             except Exception as e:
                                 logger.warning(f"⚠️ Exception during resource deletion for {res_id}: {e}")
+                        elif operation == "PUT" and REVERT_UPDATES and original_state:
+                            try:
+                                rev_resp = requests.put(url, headers=headers, json=original_state, timeout=15)
+                                if not rev_resp.ok:
+                                    logger.warning(f"⚠️ Failed to revert resource {res_id}: HTTP {rev_resp.status_code} - {rev_resp.text}")
+                                else:
+                                    logger.info(f"⏪ Successfully reverted resource: {res_id} to its original state")
+                            except Exception as e:
+                                logger.warning(f"⚠️ Exception during resource revert for {res_id}: {e}")
             else:
                 if isinstance(resp_body, list) and all(isinstance(e, dict) and "code" in e for e in resp_body):
                     codes = ", ".join([f"{e.get('code')} ({e.get('message', 'No message')})" for e in resp_body])
