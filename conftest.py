@@ -2,6 +2,7 @@ import pytest
 import logging
 import os_test_framework
 import security_test_framework
+import utilities
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,7 @@ def pytest_configure(config):
 def global_session_setup():
     """Global setup and teardown for the entire test session."""
     logger.info("Test Suite -- session started")
+    utilities.download_tc_data_from_gdrive()
     yield
     logger.info("Test Suite -- session ended")
     os_test_framework.cleanup_temp_data()

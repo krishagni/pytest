@@ -3,7 +3,10 @@ import io
 import json
 import logging
 import os
+import shutil
 import threading
+import functools
+import gdown
 import functools
 from datetime import datetime
 
@@ -24,6 +27,54 @@ load_dotenv(env_file)
 
 # ── Global Config ─────────────────────────────────────────────────────────────
 BASE_URL = os.getenv("OS_BASE_URL", "").rstrip("/")
+SECURITY_TC_DATA_GDRIVE_FOLDER_ID = os.getenv("SECURITY_TC_DATA_GDRIVE_FOLDER_ID", "")
+SECURITY_TC_DATA_DIR = os.getenv("SECURITY_TC_DATA_DIR", "security_tests/tc_data")
+
+# ── Google Drive Download ────────────────────────────────────────────────────
+def download_tc_data_from_gdrive():
+    """Downloads the tc_data folder from Google Drive using gdown."""
+    folder_id = SECURITY_TC_DATA_GDRIVE_FOLDER_ID
+    if not folder_id:
+        logger.info("SECURITY_TC_DATA_GDRIVE_FOLDER_ID not set — skipping Drive download and using local folder.")
+        return
+
+    logger.info(f"Downloading tc_data folder from Google Drive (ID: {folder_id})...")
+    
+    # We download to a temporary folder name first
+    temp_download_dir = "temp_tc_data_download"
+    
+    # Clean up previous temp dir if it exists
+    if os.path.exists(temp_download_dir):
+        shutil.rmtree(temp_download_dir)
+        
+    try:
+        # gdown downloads the folder. Format required is a folder URL
+        folder_url = f"https://drive.google.com/drive/folders/{folder_id}"
+        
+        # Download the folder directly into the temp directory
+        downloaded_paths = gdown.download_folder(id=folder_id, output=temp_download_dir, quiet=False, use_cookies=True)
+        
+        if not downloaded_paths or not os.path.exists(temp_download_dir):
+            raise Exception("Download completed but temp folder not found locally.")
+
+        # Clean up existing old tc_data dir
+        if os.path.exists(SECURITY_TC_DATA_DIR):
+            logger.info(f"Removing old local directory: {SECURITY_TC_DATA_DIR}")
+            shutil.rmtree(SECURITY_TC_DATA_DIR)
+            
+        # Ensure parent directories exist
+        os.makedirs(os.path.dirname(SECURITY_TC_DATA_DIR), exist_ok=True)
+
+        # Move the downloaded folder to the target directory
+        shutil.move(temp_download_dir, SECURITY_TC_DATA_DIR)
+        
+        logger.info(f"✅ tc_data successfully downloaded and placed at {SECURITY_TC_DATA_DIR}")
+
+    except Exception as e:
+        logger.error(f"❌ Failed to download from Google Drive: {e}")
+        logger.warning(f"Falling back to existing local folder if present: {SECURITY_TC_DATA_DIR}")
+        if os.path.exists(temp_download_dir):
+            shutil.rmtree(temp_download_dir)
 
 # ── Authentication ────────────────────────────────────────────────────────────
 _ROLES_CACHE = None

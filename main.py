@@ -83,9 +83,7 @@ def get_resources() -> list[dict]:
 
 @pytest.mark.security
 def test_security(sec_tc_row, record_property):
-    """Executes the security test scenarios."""
     security_test_framework.execute_and_record_security_test(sec_tc_row, record_property)
 
 def test_resource(os_tc_row, record_property):
-    """Generic test executing the payload against the dynamic URL for primary scenarios."""
     os_test_framework.execute_and_record_test(os_tc_row, record_property)
