@@ -178,13 +178,13 @@ def execute_security_tc(row: dict) -> dict:
                  raise Exception(f"CSV Upload failed: {upload_resp.text}")
                  
             file_id     = upload_resp.json().get("fileId")
-            logger.info(f"[{tc_id}] CSV Upload → fileId={file_id}")
+            # logger.info(f"[{tc_id}] CSV Upload → fileId={file_id}")
 
             # Inject file_id into the mandatory payload.json
             job_str     = json.dumps(core_payload).replace("{file_id}", str(file_id))
             job_payload = json.loads(job_str)
             job_url     = _build_url(endpoint.rsplit("/", 1)[0])
-            logger.info(f"[{tc_id}] Creating import job at {job_url}")
+            # logger.info(f"[{tc_id}] Creating import job at {job_url}")
 
             t0       = datetime.now()
             response = _dispatch_request("POST", job_url, headers, job_payload, "payload.json", is_multipart=False)
@@ -195,7 +195,7 @@ def execute_security_tc(row: dict) -> dict:
                     job_id = job_data.get("id")
                     if job_id:
                         job_status_url = f"{job_url}/{job_id}"
-                        logger.info(f"[{tc_id}] Polling job {job_id} at {job_status_url}...")
+                        # logger.info(f"[{tc_id}] Polling job {job_id} at {job_status_url}...")
                         
                         timeout = 60
                         start_time = time.time()
@@ -212,7 +212,7 @@ def execute_security_tc(row: dict) -> dict:
                                     break
                             time.sleep(2)
                         
-                        logger.info(f"[{tc_id}] Job {job_id} finished with status: {final_status}")
+                        # logger.info(f"[{tc_id}] Job {job_id} finished with status: {final_status}")
                         
                         if final_status == "FAILED":
                             response.status_code = 400
@@ -228,14 +228,14 @@ def execute_security_tc(row: dict) -> dict:
                     
         elif file_type == "json":
             # ── Default: standard REST request using payload.json ────────────
-            logger.info(f"[{tc_id}] JSON STANDARD {operation} -> {url}")
+            # logger.info(f"[{tc_id}] JSON STANDARD {operation} -> {url}")
             t0       = datetime.now()
             response = _dispatch_request(operation, url, headers, core_payload, "payload.json", is_multipart=False)
             
         else:
             # ── Fallback: Single-step file upload (e.g., pdf, exe, png) ───────
             attachment = load_tc_file(tc_id, file_info, as_bytes=True)
-            logger.info(f"[{tc_id}] UPLOAD {operation} -> {url} (file: {file_info})")
+            # logger.info(f"[{tc_id}] UPLOAD {operation} -> {url} (file: {file_info})")
             t0       = datetime.now()
             response = _dispatch_request(operation, url, headers, attachment, file_info, is_multipart=True)
 
@@ -255,15 +255,15 @@ def execute_security_tc(row: dict) -> dict:
                 body_snippet = (response.text or "")[:300]
             result["Error_Details"] = body_snippet
 
-        logger.info(f"[{tc_id}] {tc_status} -- {assertion_msg}")
+        # logger.info(f"[{tc_id}] {tc_status} -- {assertion_msg}")
 
     except FileNotFoundError as fnf:
         result["Error_Details"] = str(fnf)
-        logger.error(f"[{tc_id}] File not found: {fnf}")
+        # logger.error(f"[{tc_id}] File not found: {fnf}")
 
     except Exception as exc:
         result["Error_Details"] = str(exc)
-        logger.error(f"[{tc_id}] Unexpected error: {exc}")
+        # logger.error(f"[{tc_id}] Unexpected error: {exc}")
 
     return result
 

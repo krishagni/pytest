@@ -38,7 +38,7 @@ def download_tc_data_from_gdrive():
         logger.info("SECURITY_TC_DATA_GDRIVE_FOLDER_ID not set — skipping Drive download and using local folder.")
         return
 
-    logger.info(f"Downloading tc_data folder from Google Drive (ID: {folder_id})...")
+    # logger.info(f"Downloading tc_data folder from Google Drive (ID: {folder_id})...")
     
     # We download to a temporary folder name first
     temp_download_dir = "temp_tc_data_download"
@@ -52,14 +52,14 @@ def download_tc_data_from_gdrive():
         folder_url = f"https://drive.google.com/drive/folders/{folder_id}"
         
         # Download the folder directly into the temp directory
-        downloaded_paths = gdown.download_folder(id=folder_id, output=temp_download_dir, quiet=False, use_cookies=True)
+        downloaded_paths = gdown.download_folder(id=folder_id, output=temp_download_dir, quiet=True, use_cookies=True)
         
         if not downloaded_paths or not os.path.exists(temp_download_dir):
             raise Exception("Download completed but temp folder not found locally.")
 
         # Clean up existing old tc_data dir
         if os.path.exists(SECURITY_TC_DATA_DIR):
-            logger.info(f"Removing old local directory: {SECURITY_TC_DATA_DIR}")
+            # logger.info(f"Removing old local directory: {SECURITY_TC_DATA_DIR}")
             shutil.rmtree(SECURITY_TC_DATA_DIR)
             
         # Ensure parent directories exist
@@ -68,11 +68,11 @@ def download_tc_data_from_gdrive():
         # Move the downloaded folder to the target directory
         shutil.move(temp_download_dir, SECURITY_TC_DATA_DIR)
         
-        logger.info(f"✅ tc_data successfully downloaded and placed at {SECURITY_TC_DATA_DIR}")
+        # logger.info(f"✅ tc_data successfully downloaded and placed at {SECURITY_TC_DATA_DIR}")
 
     except Exception as e:
         logger.error(f"❌ Failed to download from Google Drive: {e}")
-        logger.warning(f"Falling back to existing local folder if present: {SECURITY_TC_DATA_DIR}")
+        # logger.warning(f"Falling back to existing local folder if present: {SECURITY_TC_DATA_DIR}")
         if os.path.exists(temp_download_dir):
             shutil.rmtree(temp_download_dir)
 
@@ -100,7 +100,7 @@ def load_roles_from_gsheet() -> dict:
                     "password": row.get("Password", "").strip(),
                     "domain": row.get("Domain_Name", "").strip()
                 }
-        logger.info(f"🔑 Loaded {len(roles)} roles from GSheet")
+        # logger.info(f"🔑 Loaded {len(roles)} roles from GSheet")
         return roles
     except Exception as e:
         logger.warning(f"Failed to load roles from GSheet: {e}")

@@ -221,10 +221,11 @@ def deep_validate(res_id: int, expected_payload: dict, headers: dict, api_url: s
                     last_seg
                 )
                 resp_data[matched_key] = items_resp.json()
-                logger.warning(f"🔍 [DIAG] Injected {len(items_resp.json())} items into key '{matched_key}'")
-                logger.info(f"📦 Fetched sub-list '{matched_key}' from: {items_url}")
+                # logger.warning(f"🔍 [DIAG] Injected {len(items_resp.json())} items into key '{matched_key}'")
+                # logger.info(f"📦 Fetched sub-list '{matched_key}' from: {items_url}")
         else:
-            logger.warning(f"🔍 [DIAG] No items_url_template and no 'Items' key in payload — skipping sub-list fetch")
+            # logger.warning(f"🔍 [DIAG] No items_url_template and no 'Items' key in payload — skipping sub-list fetch")
+            pass
 
         diffs = compare_dicts(expected_payload, resp_data)
         return ("Pass", "") if not diffs else ("Fail", " | ".join(diffs))
@@ -259,7 +260,7 @@ def execute_tc(row: dict) -> dict:
         else:
             url = api_url
 
-        logger.warning(f"🔍 [TC_DEBUG] TC_ID={row.get('TC_ID')} | Operation='{operation}' | id='{res_id_input}' | URL={url}")
+
 
         original_state = None
         if operation == "PUT" and res_id_input:
@@ -277,7 +278,7 @@ def execute_tc(row: dict) -> dict:
                     orig_participant = original_state.get("participant")
                     if isinstance(orig_participant, dict) and "id" in orig_participant:
                         payload["participant"]["id"] = orig_participant["id"]
-                        logger.info(f"Auto-fetched participant.id = {orig_participant['id']} from state for Registration {res_id_input}")
+                        # logger.info(f"Auto-fetched participant.id = {orig_participant['id']} from state for Registration {res_id_input}")
 
         t0 = datetime.now()
         if operation == "POST":
@@ -325,7 +326,8 @@ def execute_tc(row: dict) -> dict:
                                 if not del_resp.ok:
                                     logger.warning(f"⚠️ Failed to delete resource at {delete_url}: HTTP {del_resp.status_code} - {del_resp.text}")
                                 else:
-                                    logger.info(f"🗑️ Successfully deleted resource: {res_id}")
+                                    # logger.info(f"🗑️ Successfully deleted resource: {res_id}")
+                                    pass
                             except Exception as e:
                                 logger.warning(f"⚠️ Exception during resource deletion for {res_id}: {e}")
                         elif operation == "PUT" and REVERT_UPDATES and original_state:
@@ -334,7 +336,8 @@ def execute_tc(row: dict) -> dict:
                                 if not rev_resp.ok:
                                     logger.warning(f"⚠️ Failed to revert resource {res_id}: HTTP {rev_resp.status_code} - {rev_resp.text}")
                                 else:
-                                    logger.info(f"⏪ Successfully reverted resource: {res_id} to its original state")
+                                    # logger.info(f"⏪ Successfully reverted resource: {res_id} to its original state")
+                                    pass
                             except Exception as e:
                                 logger.warning(f"⚠️ Exception during resource revert for {res_id}: {e}")
             else:

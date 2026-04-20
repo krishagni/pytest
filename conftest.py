@@ -15,10 +15,10 @@ def pytest_configure(config):
 @pytest.fixture(scope="session", autouse=True)
 def global_session_setup():
     """Global setup and teardown for the entire test session."""
-    logger.info("Test Suite -- session started")
+    # logger.info("Test Suite -- session started")
     utilities.download_tc_data_from_gdrive()
     yield
-    logger.info("Test Suite -- session ended")
+    # logger.info("Test Suite -- session ended")
     os_test_framework.cleanup_temp_data()
 
 def pytest_generate_tests(metafunc):
