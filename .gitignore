@@ -20,3 +20,6 @@ env/
 # Editor settings
 .vscode/
 
+# Build artifacts / Misc
+index.html
+
