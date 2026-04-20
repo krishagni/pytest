@@ -17,3 +17,6 @@ venv/
 env/
 *.egg-info/
 
+# Editor settings
+.vscode/
+
