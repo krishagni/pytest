@@ -189,6 +189,9 @@ def execute_security_tc(row: dict) -> dict:
             t0       = datetime.now()
             response = _dispatch_request("POST", job_url, headers, job_payload, "payload.json", is_multipart=False)
 
+            if not response.ok:
+                logger.error(f"[{tc_id}] Job creation failed: {response.status_code} - {response.text}")
+
             if response.ok:
                 try:
                     job_data = response.json()

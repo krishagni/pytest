@@ -11,15 +11,12 @@ security_output_*.csv
 security_report.html
 allure-report/
 
-# Virtual environments
+
 .venv/
 venv/
 env/
 *.egg-info/
 
-# Editor settings
 .vscode/
-
-# Build artifacts / Misc
 index.html
 
