@@ -1,7 +1,8 @@
 import os, csv, json, pytest, requests, functools, logging, threading, io
 from datetime import datetime
 from typing import Optional
-from utilities import logger, BASE_URL, get_token, CSVLogger
+from utilities import logger, BASE_URL, get_token, CSVLogger, fetch_original_state, cleanup_or_revert_api_resource, \
+    STATUS_FLD, VALID_STAT_FLD, ERR_FLD, HTTP_CODE_FLD
 
 # Load externalized messages
 MSG_FILE = os.path.join(os.path.dirname(__file__), "messages.json")
@@ -17,15 +18,16 @@ INPUT_FILE          = os.getenv("INPUT_FILE", "input_data.csv")
 SAVE_SNAPSHOT       = os.getenv("SAVE_INPUT_SNAPSHOT", "false").lower() == "true"
 SNAPSHOT_DIR        = os.getenv("SNAPSHOT_DIR", "input_snapshots")
 DATA_DIR            = os.getenv("DATA_DIR", "temp_test_data")
-CLEANUP_RESOURCES   = os.getenv("CLEANUP_RESOURCES", "true").lower() == "true"
-REVERT_UPDATES      = os.getenv("REVERT_UPDATES", "true").lower() == "true"
+
 
 _env_output         = os.getenv("OUTPUT_FILE", "output_results.csv")
 _base, _ext         = os.path.splitext(_env_output)
 OUTPUT_FILE         = f"{_base}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{_ext}"
 
 META_FIELDS  = json.loads(os.environ["META_FIELDS"])
-OUTPUT_EXTRA = json.loads(os.environ["OUTPUT_EXTRA"])
+
+# Overriding OUTPUT_EXTRA from .env to remove Latency_ms and Validation_Diff
+OUTPUT_EXTRA = [STATUS_FLD, VALID_STAT_FLD, ERR_FLD, HTTP_CODE_FLD]
 
 # ── Data Loading (Now Saves Locally First) ────────────────────────────────────
 
@@ -240,12 +242,12 @@ def execute_tc(row: dict) -> dict:
     if not api_url:
         err_msg = get_msg("ERR_MISSING_API_URL")
         logger.error(err_msg)
-        return {**row, "TC_Status": "ERROR", "Error_Received": err_msg}
+        return {**row, STATUS_FLD: "ERROR", ERR_FLD: err_msg}
 
     result = {**row}
     for field in OUTPUT_EXTRA:
         result[field] = ""
-    result["TC_Status"] = "FAIL" # Set a default status
+    result[STATUS_FLD] = "FAIL" # Set a default status
     try:
         role = row.get("Role", "admin").strip() # remove the default admin, should strictly abide as per roles defined in the sheet 
         token = get_token(role)
@@ -264,12 +266,7 @@ def execute_tc(row: dict) -> dict:
 
         original_state = None
         if operation == "PUT" and res_id_input:
-            try:
-                pre_resp = requests.get(url, headers=headers, timeout=15)
-                if pre_resp.ok:
-                    original_state = pre_resp.json()
-            except Exception as e:
-                logger.warning(f"⚠️ Could not fetch original state for {res_id_input}: {e}")
+            original_state = fetch_original_state(url, headers)
 
         # --- AUTO-FETCH PARTICIPANT ID (IF MISSING) ---
         if original_state and isinstance(original_state, dict):
@@ -280,7 +277,6 @@ def execute_tc(row: dict) -> dict:
                         payload["participant"]["id"] = orig_participant["id"]
                         # logger.info(f"Auto-fetched participant.id = {orig_participant['id']} from state for Registration {res_id_input}")
 
-        t0 = datetime.now()
         if operation == "POST":
             resp = requests.post(url, headers=headers, json=payload, timeout=15)
         elif operation == "PUT":
@@ -290,8 +286,7 @@ def execute_tc(row: dict) -> dict:
         else:
             raise ValueError(f"Unsupported operation: {operation}")
         
-        result["Latency_ms"] = int((datetime.now() - t0).total_seconds() * 1000)
-        result["HTTP_Status_Code"] = resp.status_code
+        result[HTTP_CODE_FLD] = resp.status_code
         
         # Extract body but DO NOT save to result to keep CSV small
         try:
@@ -314,41 +309,22 @@ def execute_tc(row: dict) -> dict:
                     if res_id:
                         # Optimized: Pass the POST response body to skip redundant GET if possible
                         v_stat, v_diff = deep_validate(res_id, payload, headers, api_url, actual_response=resp_body if isinstance(resp_body, dict) else None, items_url_template=items_url_template)
-                        result["Validation_Status"], result["Validation_Diff"] = v_stat, v_diff
+                        result[VALID_STAT_FLD] = v_stat
                         if v_stat != "Pass": 
-                            result["TC_Status"] = "FAIL"
+                            result[STATUS_FLD] = "FAIL"
+                            result[ERR_FLD] = v_diff
                         
                         # Teardown / Cleanup
-                        if operation == "POST" and CLEANUP_RESOURCES:
-                            try:
-                                delete_url = f"{api_url.rstrip('/')}/{res_id}?forceDelete=true"
-                                del_resp = requests.delete(delete_url, headers=headers, timeout=15)
-                                if not del_resp.ok:
-                                    logger.warning(f"⚠️ Failed to delete resource at {delete_url}: HTTP {del_resp.status_code} - {del_resp.text}")
-                                else:
-                                    # logger.info(f"🗑️ Successfully deleted resource: {res_id}")
-                                    pass
-                            except Exception as e:
-                                logger.warning(f"⚠️ Exception during resource deletion for {res_id}: {e}")
-                        elif operation == "PUT" and REVERT_UPDATES and original_state:
-                            try:
-                                rev_resp = requests.put(url, headers=headers, json=original_state, timeout=15)
-                                if not rev_resp.ok:
-                                    logger.warning(f"⚠️ Failed to revert resource {res_id}: HTTP {rev_resp.status_code} - {rev_resp.text}")
-                                else:
-                                    # logger.info(f"⏪ Successfully reverted resource: {res_id} to its original state")
-                                    pass
-                            except Exception as e:
-                                logger.warning(f"⚠️ Exception during resource revert for {res_id}: {e}")
+                        cleanup_or_revert_api_resource(operation, api_url, headers, res_id, original_state)
             else:
                 if isinstance(resp_body, list) and all(isinstance(e, dict) and "code" in e for e in resp_body):
                     codes = ", ".join([f"{e.get('code')} ({e.get('message', 'No message')})" for e in resp_body])
-                    result["Error_Received"] = f"Failed HTTP {resp.status_code} - errors: {codes}"
+                    result[ERR_FLD] = f"Failed HTTP {resp.status_code} - errors: {codes}"
                 elif isinstance(resp_body, dict) and "code" in resp_body:
-                    result["Error_Received"] = f"Failed HTTP {resp.status_code} - Code: {resp_body.get('code')}"
+                    result[ERR_FLD] = f"Failed HTTP {resp.status_code} - Code: {resp_body.get('code')}"
                 else:
                     body_str = str(resp_body)[:400] if resp_body else ""
-                    result["Error_Received"] = f"Failed HTTP {resp.status_code}: {body_str}"
+                    result[ERR_FLD] = f"Failed HTTP {resp.status_code}: {body_str}"
         else:
             
             # Extract all actual error codes from JSON response
@@ -362,13 +338,13 @@ def execute_tc(row: dict) -> dict:
                 resp_str = json.dumps(resp_body) if isinstance(resp_body, dict) else str(resp_body)
                 # PASS if (no code expected) OR (code in list) OR (code in body string)
                 if not expected_err or any(expected_err == c for c in actual_codes) or expected_err in resp_str.lower():
-                    result["TC_Status"] = "PASS"
+                    result[STATUS_FLD] = "PASS"
                 else:
-                    result["Error_Received"] = f"Code mismatch: expected='{expected_err}' | actual='{actual_codes}'"
+                    result[ERR_FLD] = f"Code mismatch: expected='{expected_err}' | actual='{actual_codes}'"
             else:
-                result["Error_Received"] = "Expected fail but got HTTP 200"
+                result[ERR_FLD] = "Expected fail but got HTTP 200"
     except Exception as e:
-        result["Error_Received"] = str(e)
+        result[ERR_FLD] = str(e)
     return result
 
 # ── Integration & Export ──────────────────────────────────────────────────────
@@ -397,8 +373,8 @@ def execute_and_record_test(tc_row, record_property):
 
     for field in OUTPUT_EXTRA:
         record_property(field, str(res.get(field, "")))
-    if res["TC_Status"] != "PASS":
-        pytest.fail(f"[{tc_row.get('TC_ID')}] {res.get('Error_Received') or res.get('Validation_Diff')}", pytrace=False)
+    if res[STATUS_FLD] != "PASS":
+        pytest.fail(f"[{tc_row.get('TC_ID')}] {res.get(ERR_FLD)}", pytrace=False)
 
 def cleanup_temp_data():
     """Deletes all files within DATA_DIR and removes the directory."""

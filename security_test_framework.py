@@ -8,7 +8,8 @@ import time
 from datetime import datetime
 
 import requests
-from utilities import logger, BASE_URL, get_auth_headers, CSVLogger
+from utilities import logger, BASE_URL, get_auth_headers, CSVLogger, fetch_original_state, cleanup_or_revert_api_resource, \
+    STATUS_FLD, HTTP_CODE_FLD, ERR_FLD, SEC_ASSERTION_FLD, REFL_INPUT_FLD
 
 # ── Config (all from .env) ────────────────────────────────────────────────────
 
@@ -19,9 +20,18 @@ _env_sec_out         = os.getenv("SECURITY_OUTPUT_FILE", "security_output.csv")
 _base, _ext          = os.path.splitext(_env_sec_out)
 SECURITY_OUTPUT_FILE = f"{_base}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{_ext}"
 
-# Output columns for the security results CSV
 SECURITY_META_FIELDS  = json.loads(os.environ["SECURITY_META_FIELDS"])
-SECURITY_OUTPUT_EXTRA = json.loads(os.environ["SECURITY_OUTPUT_EXTRA"])
+
+# ── Security Output Field Definitions (Centralized in utilities) ─────────────
+# All field names are imported from utilities to allow easy rename via .env
+
+# Standardizing security fields to use global names where applicable
+# ERR_DETAILS_FLD is mapped to ERR_FLD for cross-framework consistency
+ERR_DETAILS_FLD     = ERR_FLD 
+
+SECURITY_OUTPUT_EXTRA = [
+    STATUS_FLD, HTTP_CODE_FLD, SEC_ASSERTION_FLD, REFL_INPUT_FLD, ERR_DETAILS_FLD
+]
 
 # ── Sheet Loader ──────────────────────────────────────────────────────────────
 
@@ -129,14 +139,19 @@ def assert_security(
 
     if expected == "fail":
         if not response.ok:
-            return "PASS", f"Server correctly rejected input (HTTP {response.status_code})"
-        msg = f"SECURITY VULNERABILITY: Server accepted malicious input (HTTP {response.status_code}). Response: {response.text}"
+            try:
+                snippet = json.dumps(response.json())[:300]
+            except Exception:
+                snippet = (response.text or "")[:300]
+            return "PASS", f"Server correctly rejected input (HTTP {response.status_code}). Response: {snippet}"
+        
+        msg = f"SECURITY VULNERABILITY: Server accepted malicious input (HTTP {response.status_code}). Response: {(response.text or '')[:300]}"
         return "FAIL", msg
 
     if expected == "pass":
         if response.ok:
             return "PASS", f"Legitimate request accepted (HTTP {response.status_code})"
-        return "FAIL", f"Legitimate request unexpectedly rejected (HTTP {response.status_code}). Response: {response.text}"
+        return "FAIL", f"Legitimate request unexpectedly rejected (HTTP {response.status_code}). Response: {(response.text or '')[:300]}"
 
     return "ERROR", f"Unknown Expected_Result value: '{expected}' (use 'pass' or 'fail')"
 
@@ -154,7 +169,7 @@ def execute_security_tc(row: dict) -> dict:
     result = {field: row.get(field, "") for field in SECURITY_META_FIELDS}
     for field in SECURITY_OUTPUT_EXTRA:
         result[field] = ""
-    result["TC_Status"] = "ERROR"
+    result[STATUS_FLD] = "ERROR"
 
     try:
         # 1. ALWAYS load payload.json (hardcoded and mandatory for all tests)
@@ -167,6 +182,10 @@ def execute_security_tc(row: dict) -> dict:
 
         url     = _build_url(endpoint)
         headers = get_auth_headers()
+
+        original_state = None
+        if operation == "PUT":
+            original_state = fetch_original_state(url, headers)
 
         # 2. Route based strictly on 'csv' or 'json'
         if file_type == "csv":
@@ -186,7 +205,6 @@ def execute_security_tc(row: dict) -> dict:
             job_url     = _build_url(endpoint.rsplit("/", 1)[0])
             # logger.info(f"[{tc_id}] Creating import job at {job_url}")
 
-            t0       = datetime.now()
             response = _dispatch_request("POST", job_url, headers, job_payload, "payload.json", is_multipart=False)
 
             if not response.ok:
@@ -232,40 +250,50 @@ def execute_security_tc(row: dict) -> dict:
         elif file_type == "json":
             # ── Default: standard REST request using payload.json ────────────
             # logger.info(f"[{tc_id}] JSON STANDARD {operation} -> {url}")
-            t0       = datetime.now()
             response = _dispatch_request(operation, url, headers, core_payload, "payload.json", is_multipart=False)
             
         else:
             # ── Fallback: Single-step file upload (e.g., pdf, exe, png) ───────
             attachment = load_tc_file(tc_id, file_info, as_bytes=True)
             # logger.info(f"[{tc_id}] UPLOAD {operation} -> {url} (file: {file_info})")
-            t0       = datetime.now()
             response = _dispatch_request(operation, url, headers, attachment, file_info, is_multipart=True)
 
-        latency_ms = int((datetime.now() - t0).total_seconds() * 1000)
-
-        result["HTTP_Status_Code"] = response.status_code
-        result["Latency_ms"]       = latency_ms
+        result[HTTP_CODE_FLD] = response.status_code
 
         tc_status, assertion_msg = assert_security(row, response, core_payload)
-        result["TC_Status"]             = tc_status
-        result["Security_Assertion"]    = assertion_msg
+        result[STATUS_FLD]             = tc_status
+        result[SEC_ASSERTION_FLD]    = assertion_msg
 
         if tc_status == "FAIL":
             try:
                 body_snippet = json.dumps(response.json())[:300]
             except Exception:
                 body_snippet = (response.text or "")[:300]
-            result["Error_Details"] = body_snippet
+            result[ERR_DETAILS_FLD] = body_snippet
+
+        # --- Teardown / Cleanup for security test ---
+        if operation in ("POST", "PUT") and response.ok:
+            try:
+                resp_json = response.json() if response.text else {}
+                res_id = resp_json.get("id")
+                
+                if operation == "PUT":
+                    base_url = url.rsplit('/', 1)[0]
+                else:
+                    base_url = url
+
+                cleanup_or_revert_api_resource(operation, base_url, headers, res_id, original_state)
+            except Exception as e:
+                logger.warning(f"[{tc_id}] Exception during teardown: {e}")
 
         # logger.info(f"[{tc_id}] {tc_status} -- {assertion_msg}")
 
     except FileNotFoundError as fnf:
-        result["Error_Details"] = str(fnf)
+        result[ERR_DETAILS_FLD] = str(fnf)
         # logger.error(f"[{tc_id}] File not found: {fnf}")
 
     except Exception as exc:
-        result["Error_Details"] = str(exc)
+        result[ERR_DETAILS_FLD] = str(exc)
         # logger.error(f"[{tc_id}] Unexpected error: {exc}")
 
     return result
@@ -286,7 +314,7 @@ def execute_and_record_security_test(row: dict, record_property):
     for field in SECURITY_OUTPUT_EXTRA:
         record_property(field, str(result.get(field, "")))
 
-    if result["TC_Status"] != "PASS":
+    if result[STATUS_FLD] != "PASS":
         tc_id   = row.get("TC_ID", "?")
-        details = result.get("Security_Assertion") or result.get("Error_Details") or "No details"
+        details = result.get(SEC_ASSERTION_FLD) or result.get(ERR_DETAILS_FLD) or "No details"
         pytest.fail(f"[{tc_id}] {details}", pytrace=False)

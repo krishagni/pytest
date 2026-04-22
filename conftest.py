@@ -3,6 +3,7 @@ import logging
 import os_test_framework
 import security_test_framework
 import utilities
+from utilities import STATUS_FLD, VALID_STAT_FLD, ERR_FLD, HTTP_CODE_FLD, SEC_ASSERTION_FLD
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,8 @@ def pytest_runtest_makereport(item, call):
     """
     Remove the 'Captured stderr call' and 'Captured log call' 
     sections from the pytest HTML report to reduce noise.
+    Also inject test execution data into report details so it 
+    remains visible even for passed test cases.
     """
     outcome = yield
     report = outcome.get_result()
@@ -77,3 +80,17 @@ def pytest_runtest_makereport(item, call):
             section for section in report.sections 
             if section[0] not in ["Captured stderr call", "Captured log call"]
         ]
+
+    if call.when == "call" and hasattr(report, "sections"):
+        props = dict(item.user_properties)
+        lines = []
+        # Standardized error details mapping
+        ERR_DETAILS_FLD   = ERR_FLD 
+        
+        for key in [HTTP_CODE_FLD, SEC_ASSERTION_FLD, VALID_STAT_FLD, ERR_DETAILS_FLD, ERR_FLD]:
+            val = props.get(key)
+            if val and str(val).strip() and str(val).strip() != "None":
+                lines.append(f"{key.replace('_', ' ')}: {val}")
+                
+        if lines:
+            report.sections.append(("Execution Information", "\n".join(lines)))
