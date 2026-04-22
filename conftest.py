@@ -63,3 +63,17 @@ def pytest_generate_tests(metafunc):
                     cases,
                     ids=[r.get("TC_ID", f"TC_{i}") for i, r in enumerate(cases)],
                 )
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """
+    Remove the 'Captured stderr call' and 'Captured log call' 
+    sections from the pytest HTML report to reduce noise.
+    """
+    outcome = yield
+    report = outcome.get_result()
+    if hasattr(report, "sections"):
+        report.sections = [
+            section for section in report.sections 
+            if section[0] not in ["Captured stderr call", "Captured log call"]
+        ]
