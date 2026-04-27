@@ -10,8 +10,6 @@ security_tests/
 security_output_*.csv
 security_report.html
 allure-report/
-
-
 .venv/
 venv/
 env/
@@ -20,3 +18,4 @@ env/
 .vscode/
 index.html
 
+query_tests/ 

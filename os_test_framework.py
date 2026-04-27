@@ -2,7 +2,8 @@ import os, csv, json, pytest, requests, functools, logging, threading, io
 from datetime import datetime
 from typing import Optional
 from utilities import logger, BASE_URL, get_token, CSVLogger, fetch_original_state, cleanup_or_revert_api_resource, \
-    STATUS_FLD, VALID_STAT_FLD, ERR_FLD, HTTP_CODE_FLD
+    STATUS_FLD, VALID_STAT_FLD, ERR_FLD, HTTP_CODE_FLD, QUERY_TC_DATA_DIR
+from query_validator import execute_query_workflow
 
 # Load externalized messages
 MSG_FILE = os.path.join(os.path.dirname(__file__), "messages.json")
@@ -111,7 +112,7 @@ def row_to_payload(row: dict) -> dict:
                     inst = parts[0]
                     sites = parts[1:]
                     if inst not in payload["distributingSites"]:
-                        payload["distributingSites"][inst] = []
+                        payload["distributingSites"][inst] = [] # find a way to remove the hardcoding for the given resources
                     payload["distributingSites"][inst].extend(sites)
             continue
 
@@ -283,6 +284,24 @@ def execute_tc(row: dict) -> dict:
             resp = requests.put(url, headers=headers, json=payload, timeout=15)
         elif operation == "DELETE":
             resp = requests.delete(url, headers=headers, timeout=15)
+        elif operation == "EXPORT":
+            saved_query_id = row.get("id", "").strip()
+            ref_file = row.get("File_info", "").strip()
+            if not saved_query_id:
+                raise ValueError("No 'id' (savedQueryId) provided for EXPORT operation. Ensure the 'id' column is filled.")
+            
+            # Robustly locate the reference CSV inside the extracted tree
+            from pathlib import Path
+            found_paths = list(Path(QUERY_TC_DATA_DIR).rglob(ref_file))
+            if not found_paths:
+                raise ValueError(f"Reference file not found in {QUERY_TC_DATA_DIR}: {ref_file}")
+
+            status, err_msg, metrics = execute_query_workflow(row.get("TC_ID", "UNKNOWN"), saved_query_id, headers, str(found_paths[0]))
+            result[HTTP_CODE_FLD] = 200 if status == "PASS" else 400
+            result[VALID_STAT_FLD] = status
+            result[ERR_FLD] = err_msg
+            result[STATUS_FLD] = status
+            return result
         else:
             raise ValueError(f"Unsupported operation: {operation}")
         
