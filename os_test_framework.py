@@ -282,16 +282,6 @@ def execute_tc(row: dict) -> dict:
         original_state = None
         if operation == "PUT" and res_id_input:
             original_state = fetch_original_state(url, headers)
-
-        # --- AUTO-FETCH PARTICIPANT ID (IF MISSING) ---
-        if original_state and isinstance(original_state, dict):
-            if "participant" in payload and isinstance(payload["participant"], dict):
-                if "id" not in payload["participant"]:
-                    orig_participant = original_state.get("participant")
-                    if isinstance(orig_participant, dict) and "id" in orig_participant:
-                        payload["participant"]["id"] = orig_participant["id"]
-                        # logger.info(f"Auto-fetched participant.id = {orig_participant['id']} from state for Registration {res_id_input}")
-
         if operation == "POST":
             resp = requests.post(url, headers=headers, json=payload, timeout=15)
         elif operation == "PUT":
