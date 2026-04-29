@@ -94,6 +94,34 @@ def _smart_cast(v: str):
         pass
     return val
 
+def _collapse_kv_pairs(data):
+    """
+    Post-processes the intermediate payload built by dot-notation parsing.
+    Converts any list-of-{$key, $value} structures into proper JSON maps.
+    Examples:
+      [{"$key": "Biobank", "$value": ["Site A"]}]  →  {"Biobank": ["Site A"]}
+      {"$key": "color", "$value": "red"}            →  {"color": "red"}
+    """
+    if isinstance(data, list):
+        # If every non-None item in the list is a KV pair → collapse to map
+        kv_items = [i for i in data if i is not None]
+        if kv_items and all(
+            isinstance(i, dict) and "$key" in i and "$value" in i
+            for i in kv_items
+        ):
+            result = {}
+            for item in kv_items:
+                result[item["$key"]] = _collapse_kv_pairs(item["$value"])
+            return result
+        # Otherwise recursively process each list element
+        return [_collapse_kv_pairs(i) for i in data]
+    if isinstance(data, dict):
+        # Bare single-entry KV pair (no index) → also collapse
+        if "$key" in data and "$value" in data and len(data) == 2:
+            return {data["$key"]: _collapse_kv_pairs(data["$value"])}
+        return {k: _collapse_kv_pairs(v) for k, v in data.items()}
+    return data
+
 def row_to_payload(row: dict) -> dict:
     payload = {}
     for k, v in row.items():
@@ -101,21 +129,7 @@ def row_to_payload(row: dict) -> dict:
         if not k or k in META_FIELDS or k in OUTPUT_EXTRA or k == "id" or v == "":
             continue
 
-        if k == "distributingSites":
-            if "distributingSites" not in payload:
-                payload["distributingSites"] = {}
-            # Support multiple groups separated by semicolon or pipe
-            groups = str(v).split(";") if ";" in str(v) else str(v).split("|") if "|" in str(v) else [str(v)]
-            for group in groups:
-                parts = [x.strip() for x in group.split(",") if x.strip()]
-                if parts:
-                    inst = parts[0]
-                    sites = parts[1:]
-                    if inst not in payload["distributingSites"]:
-                        payload["distributingSites"][inst] = [] # find a way to remove the hardcoding for the given resources
-                    payload["distributingSites"][inst].extend(sites)
-            continue
-
+        
         value = _smart_cast(v)
         keys = k.split(".")
         current = payload
@@ -148,7 +162,7 @@ def row_to_payload(row: dict) -> dict:
 
     if "activityStatus" not in payload:
         payload["activityStatus"] = "Active"
-    return payload
+    return _collapse_kv_pairs(payload)
 
 # ── Deep Validation ───────────────────────────────────────────────────────────
 

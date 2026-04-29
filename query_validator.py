@@ -53,12 +53,10 @@ def validate_query_response(tc_id: str, resp_data: dict, reference_csv_path: str
         rows = resp_data.get("rows", [])
         
         # OpenSpecimen's CSV generator natively replaces "# " with "_" in column headers.
-        # Since we are fetching the raw JSON, we replicate that normalization here.
         normalized_labels = [label.replace("# ", "_") for label in column_labels]
         
         # Build pandas DataFrame for the exported data from the JSON response
         df_export = pd.DataFrame(rows, columns=normalized_labels)
-        
         # Load reference data from file
         try:
             df_ref = pd.read_csv(reference_csv_path, skiprows=SKIP_ROWS)
