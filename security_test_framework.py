@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 
 import requests
-from utilities import logger, BASE_URL, get_auth_headers, CSVLogger, fetch_original_state, cleanup_or_revert_api_resource, \
+from utilities import logger, BASE_URL, get_auth_headers, fetch_original_state, cleanup_or_revert_api_resource, \
     STATUS_FLD, HTTP_CODE_FLD, ERR_FLD, SEC_ASSERTION_FLD, REFL_INPUT_FLD
 
 # ── Config (all from .env) ────────────────────────────────────────────────────
@@ -16,9 +16,7 @@ from utilities import logger, BASE_URL, get_auth_headers, CSVLogger, fetch_origi
 SECURITY_GSHEET_URL  = os.getenv("SECURITY_GSHEET_URL", "")
 SECURITY_TC_DATA_DIR = os.getenv("SECURITY_TC_DATA_DIR", "security_tests/tc_data")
 
-_env_sec_out         = os.getenv("SECURITY_OUTPUT_FILE", "security_output.csv")
-_base, _ext          = os.path.splitext(_env_sec_out)
-SECURITY_OUTPUT_FILE = f"{_base}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{_ext}"
+
 
 SECURITY_META_FIELDS  = json.loads(os.environ["SECURITY_META_FIELDS"])
 
@@ -298,18 +296,12 @@ def execute_security_tc(row: dict) -> dict:
 
     return result
 
-# ── Output CSV ────────────────────────────────────────────────────────────────
 
-_sec_logger = CSVLogger(SECURITY_OUTPUT_FILE, SECURITY_META_FIELDS + SECURITY_OUTPUT_EXTRA)
-
-def write_security_result(result: dict):
-    _sec_logger.write_row(result)
 
 def execute_and_record_security_test(row: dict, record_property):
     """Refactored helper to execute, log, and fail security tests."""
     import pytest
     result = execute_security_tc(row)
-    write_security_result(result)
 
     for field in SECURITY_OUTPUT_EXTRA:
         record_property(field, str(result.get(field, "")))

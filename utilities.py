@@ -153,29 +153,7 @@ def get_auth_headers(role: str = None) -> dict:
     """Helper to get standardized headers for API requests."""
     return {"X-OS-API-TOKEN": get_token(role), "Content-Type": "application/json"}
 
-# ── CSV Logging helper ────────────────────────────────────────────────────────
-class CSVLogger:
-    def __init__(self, filename: str, headers: list):
-        self.filename = filename
-        self.headers = headers
-        self.lock = threading.Lock()
-        self.initialized = False
-        
-    def init_file(self):
-        with self.lock:
-            if not self.initialized:
-                with open(self.filename, "w", newline="", encoding="utf-8") as f:
-                    writer = csv.DictWriter(f, fieldnames=self.headers, extrasaction="ignore")
-                    writer.writeheader()
-                self.initialized = True
-                
-    def write_row(self, row: dict):
-        if not self.initialized:
-            self.init_file()
-        with self.lock:
-            with open(self.filename, "a", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=self.headers, extrasaction="ignore")
-                writer.writerow(row)
+
 
 # ── Shared API Revert & Cleanup Helpers ─────────────────────────────────────
 

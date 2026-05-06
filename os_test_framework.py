@@ -1,7 +1,7 @@
 import os, csv, json, pytest, requests, functools, logging, threading, io
 from datetime import datetime
 from typing import Optional
-from utilities import logger, BASE_URL, get_token, CSVLogger, fetch_original_state, cleanup_or_revert_api_resource, \
+from utilities import logger, BASE_URL, get_token, fetch_original_state, cleanup_or_revert_api_resource, \
     STATUS_FLD, VALID_STAT_FLD, ERR_FLD, HTTP_CODE_FLD, QUERY_TC_DATA_DIR
 from query_validator import validate_query_response
 
@@ -21,9 +21,7 @@ SNAPSHOT_DIR        = os.getenv("SNAPSHOT_DIR", "input_snapshots")
 DATA_DIR            = os.getenv("DATA_DIR", "temp_test_data")
 
 
-_env_output         = os.getenv("OUTPUT_FILE", "output_results.csv")
-_base, _ext         = os.path.splitext(_env_output)
-OUTPUT_FILE         = f"{_base}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{_ext}"
+
 
 META_FIELDS  = json.loads(os.environ["META_FIELDS"])
 
@@ -264,7 +262,7 @@ def execute_tc(row: dict) -> dict:
         result[field] = ""
     result[STATUS_FLD] = "FAIL" # Set a default status
     try:
-        role = row.get("Role", "admin").strip() # remove the default admin, should strictly abide as per roles defined in the sheet 
+        role = row.get("Role", "admin").strip()
         token = get_token(role)
         headers = {"X-OS-API-TOKEN": token, "Content-Type": "application/json"}
         payload = row_to_payload(row)
@@ -371,7 +369,7 @@ def execute_tc(row: dict) -> dict:
 
 # ── Integration & Export ──────────────────────────────────────────────────────
 
-_os_logger = CSVLogger(OUTPUT_FILE, META_FIELDS + OUTPUT_EXTRA)
+
 
 import hashlib
 
@@ -390,8 +388,7 @@ def run_tc(api_url: str, csv_url: str, metafunc, items_url_template: str = "") -
 def execute_and_record_test(tc_row, record_property):
     res = execute_tc(tc_row)
     
-    # Streaming Write to CSV
-    _os_logger.write_row(res)
+
 
     for field in OUTPUT_EXTRA:
         record_property(field, str(res.get(field, "")))
