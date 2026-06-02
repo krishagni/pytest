@@ -169,6 +169,14 @@ def execute_security_tc(row: dict) -> dict:
         result[field] = ""
     result[STATUS_FLD] = "ERROR"
 
+    # Initialise variables for cleanup
+    headers = None
+    response = None
+    res_id = None
+    original_state = None
+    need_cleanup = False
+    cleanup_url = None
+
     try:
         # 1. ALWAYS load payload.json (hardcoded and mandatory for all tests)
         try:
@@ -258,6 +266,20 @@ def execute_security_tc(row: dict) -> dict:
 
         result[HTTP_CODE_FLD] = response.status_code
 
+        # Determine if a resource was created or modified and needs cleanup
+        if response is not None and response.ok and operation in ("POST", "PUT"):
+            need_cleanup = True
+            try:
+                resp_json = response.json() if response.text else {}
+                res_id = resp_json.get("id")
+            except Exception:
+                pass
+            
+            if operation == "PUT":
+                cleanup_url = url.rsplit('/', 1)[0]
+            else:
+                cleanup_url = url
+
         tc_status, assertion_msg = assert_security(row, response, core_payload)
         result[STATUS_FLD]             = tc_status
         result[SEC_ASSERTION_FLD]    = assertion_msg
@@ -269,21 +291,6 @@ def execute_security_tc(row: dict) -> dict:
                 body_snippet = (response.text or "")[:300]
             result[ERR_DETAILS_FLD] = body_snippet
 
-        # --- Teardown / Cleanup for security test ---
-        if operation in ("POST", "PUT") and response.ok:
-            try:
-                resp_json = response.json() if response.text else {}
-                res_id = resp_json.get("id")
-                
-                if operation == "PUT":
-                    base_url = url.rsplit('/', 1)[0]
-                else:
-                    base_url = url
-
-                cleanup_or_revert_api_resource(operation, base_url, headers, res_id, original_state)
-            except Exception as e:
-                logger.warning(f"[{tc_id}] Exception during teardown: {e}")
-
         # logger.info(f"[{tc_id}] {tc_status} -- {assertion_msg}")
 
     except FileNotFoundError as fnf:
@@ -293,6 +300,12 @@ def execute_security_tc(row: dict) -> dict:
     except Exception as exc:
         result[ERR_DETAILS_FLD] = str(exc)
         # logger.error(f"[{tc_id}] Unexpected error: {exc}")
+    finally:
+        if need_cleanup and res_id and headers:
+            try:
+                cleanup_or_revert_api_resource(operation, cleanup_url, headers, res_id, original_state)
+            except Exception as e:
+                logger.warning(f"[{tc_id}] Exception during teardown: {e}")
 
     return result
 
