@@ -261,6 +261,13 @@ def execute_tc(row: dict) -> dict:
     for field in OUTPUT_EXTRA:
         result[field] = ""
     result[STATUS_FLD] = "FAIL" # Set a default status
+    # Initialise variables for cleanup
+    headers = None
+    operation = None
+    res_id = None
+    original_state = None
+    need_cleanup = False
+
     try:
         role = row.get("Role", "admin").strip()
         token = get_token(role)
@@ -274,8 +281,6 @@ def execute_tc(row: dict) -> dict:
             url = f"{api_url.rstrip('/')}/{res_id_input}"
         else:
             url = api_url
-
-
 
         original_state = None
         if operation == "PUT" and res_id_input:
@@ -296,6 +301,13 @@ def execute_tc(row: dict) -> dict:
             resp_body = resp.json()
         except:
             resp_body = resp.text
+
+        # Determine if a resource was created or modified and needs cleanup
+        if resp.ok and operation in ("POST", "PUT"):
+            need_cleanup = True
+            res_id = resp_body.get("id") if isinstance(resp_body, dict) else None
+            if not res_id and res_id_input:
+                res_id = res_id_input
 
         # Smart Validation: Empty Error Code = Positive Test, Provided Error Code = Negative Test
         expected_err = row.get("Expected_Error_Code", "").strip().lower()
@@ -321,10 +333,6 @@ def execute_tc(row: dict) -> dict:
                             result[STATUS_FLD] = "FAIL"
                             result[ERR_FLD] = v_diff
                     else:
-                        res_id = resp_body.get("id") if isinstance(resp_body, dict) else None
-                        if not res_id and res_id_input:
-                            res_id = res_id_input
-
                         if res_id:
                             # Optimized: Pass the POST response body to skip redundant GET if possible
                             v_stat, v_diff = deep_validate(res_id, payload, headers, api_url, actual_response=resp_body if isinstance(resp_body, dict) else None, items_url_template=items_url_template)
@@ -332,9 +340,6 @@ def execute_tc(row: dict) -> dict:
                             if v_stat != "Pass": 
                                 result[STATUS_FLD] = "FAIL"
                                 result[ERR_FLD] = v_diff
-                            
-                            # Teardown / Cleanup
-                            cleanup_or_revert_api_resource(operation, api_url, headers, res_id, original_state)
             else:
                 if isinstance(resp_body, list) and all(isinstance(e, dict) and "code" in e for e in resp_body):
                     codes = ", ".join([f"{e.get('code')} ({e.get('message', 'No message')})" for e in resp_body])
@@ -365,6 +370,9 @@ def execute_tc(row: dict) -> dict:
     except Exception as e:
         result[STATUS_FLD] = "FAIL"
         result[ERR_FLD] = str(e)
+    finally:
+        if need_cleanup and res_id and headers:
+            cleanup_or_revert_api_resource(operation, api_url, headers, res_id, original_state)
     return result
 
 # ── Integration & Export ──────────────────────────────────────────────────────
