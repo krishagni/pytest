@@ -200,58 +200,58 @@ def execute_security_tc(row: dict) -> dict:
             upload_resp = _dispatch_request("POST", url, headers, file_bytes, file_info, is_multipart=True)
             
             if not upload_resp.ok:
-                 raise Exception(f"CSV Upload failed: {upload_resp.text}")
-                 
-            file_id     = upload_resp.json().get("fileId")
-            # logger.info(f"[{tc_id}] CSV Upload → fileId={file_id}")
+                response = upload_resp
+            else:
+                file_id     = upload_resp.json().get("fileId")
+                # logger.info(f"[{tc_id}] CSV Upload → fileId={file_id}")
 
-            # Inject file_id into the mandatory payload.json
-            job_str     = json.dumps(core_payload).replace("{file_id}", str(file_id))
-            job_payload = json.loads(job_str)
-            job_url     = _build_url(endpoint.rsplit("/", 1)[0])
-            # logger.info(f"[{tc_id}] Creating import job at {job_url}")
+                # Inject file_id into the mandatory payload.json
+                job_str     = json.dumps(core_payload).replace("{file_id}", str(file_id))
+                job_payload = json.loads(job_str)
+                job_url     = _build_url(endpoint.rsplit("/", 1)[0])
+                # logger.info(f"[{tc_id}] Creating import job at {job_url}")
 
-            response = _dispatch_request("POST", job_url, headers, job_payload, "payload.json", is_multipart=False)
+                response = _dispatch_request("POST", job_url, headers, job_payload, "payload.json", is_multipart=False)
 
-            if not response.ok:
-                logger.error(f"[{tc_id}] Job creation failed: {response.status_code} - {response.text}")
+                if not response.ok:
+                    logger.error(f"[{tc_id}] Job creation failed: {response.status_code} - {response.text}")
 
-            if response.ok:
-                try:
-                    job_data = response.json()
-                    job_id = job_data.get("id")
-                    if job_id:
-                        job_status_url = f"{job_url}/{job_id}"
-                        # logger.info(f"[{tc_id}] Polling job {job_id} at {job_status_url}...")
-                        
-                        timeout = 60
-                        start_time = time.time()
-                        final_status = "UNKNOWN"
-                        job_info = {}
-                        
-                        while time.time() - start_time < timeout:
-                            status_resp = requests.get(job_status_url, headers=headers, timeout=10)
-                            if status_resp.ok:
-                                job_info = status_resp.json()
-                                status = job_info.get("status")
-                                if status in ("COMPLETED", "FAILED", "STOPPED"):
-                                    final_status = status
-                                    break
-                            time.sleep(2)
-                        
-                        # logger.info(f"[{tc_id}] Job {job_id} finished with status: {final_status}")
-                        
-                        if final_status == "FAILED":
-                            response.status_code = 400
-                            response._content = json.dumps(job_info).encode("utf-8")
-                        elif final_status == "COMPLETED":
-                            response.status_code = 200
-                            response._content = json.dumps(job_info).encode("utf-8")
-                        else:
-                            response.status_code = 500
-                            response._content = json.dumps({"error": f"Job timeout", **job_info}).encode("utf-8")
-                except Exception as e:
-                    logger.warning(f"[{tc_id}] Failed to poll job status: {e}")
+                if response.ok:
+                    try:
+                        job_data = response.json()
+                        job_id = job_data.get("id")
+                        if job_id:
+                            job_status_url = f"{job_url}/{job_id}"
+                            # logger.info(f"[{tc_id}] Polling job {job_id} at {job_status_url}...")
+                            
+                            timeout = 60
+                            start_time = time.time()
+                            final_status = "UNKNOWN"
+                            job_info = {}
+                            
+                            while time.time() - start_time < timeout:
+                                status_resp = requests.get(job_status_url, headers=headers, timeout=10)
+                                if status_resp.ok:
+                                    job_info = status_resp.json()
+                                    status = job_info.get("status")
+                                    if status in ("COMPLETED", "FAILED", "STOPPED"):
+                                        final_status = status
+                                        break
+                                time.sleep(2)
+                            
+                            # logger.info(f"[{tc_id}] Job {job_id} finished with status: {final_status}")
+                            
+                            if final_status == "FAILED":
+                                response.status_code = 400
+                                response._content = json.dumps(job_info).encode("utf-8")
+                            elif final_status == "COMPLETED":
+                                response.status_code = 200
+                                response._content = json.dumps(job_info).encode("utf-8")
+                            else:
+                                response.status_code = 500
+                                response._content = json.dumps({"error": f"Job timeout", **job_info}).encode("utf-8")
+                    except Exception as e:
+                        logger.warning(f"[{tc_id}] Failed to poll job status: {e}")
                     
         elif file_type == "json":
             # ── Default: standard REST request using payload.json ────────────
