@@ -83,7 +83,9 @@ def get_resources() -> list[dict]:
 
 @pytest.mark.security
 def test_security(sec_tc_row, record_property):
-    security_test_framework.execute_and_record_security_test(sec_tc_row, record_property)
+    row = security_test_framework.SEC_TC_ROWS.pop(sec_tc_row)
+    security_test_framework.execute_and_record_security_test(row, record_property)
 
 def test_resource(os_tc_row, record_property):
-    os_test_framework.execute_and_record_test(os_tc_row, record_property)
+    tc_row = os_test_framework.OS_TC_ROWS.pop(os_tc_row)
+    os_test_framework.execute_and_record_test(tc_row, record_property)

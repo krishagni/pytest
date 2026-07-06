@@ -1,4 +1,5 @@
 import os, csv, json, pytest, requests, functools, logging, threading, io
+import allure
 from datetime import datetime
 from typing import Optional
 from utilities import logger, BASE_URL, get_token, fetch_original_state, cleanup_or_revert_api_resource, \
@@ -24,6 +25,11 @@ DATA_DIR            = os.getenv("DATA_DIR", "temp_test_data")
 
 
 META_FIELDS  = json.loads(os.environ["META_FIELDS"])
+
+# Populated by conftest.pytest_generate_tests; maps a short cache key -> full row dict.
+# Test rows are looked up here instead of parametrizing on the raw dict, so
+# allure-pytest's auto-captured "parameter" for the fixture stays a short string.
+OS_TC_ROWS: dict[str, dict] = {}
 
 # Overriding OUTPUT_EXTRA from .env to remove Latency_ms and Validation_Diff
 OUTPUT_EXTRA = [STATUS_FLD, VALID_STAT_FLD, ERR_FLD, HTTP_CODE_FLD]
@@ -252,6 +258,7 @@ def deep_validate(res_id: int, expected_payload: dict, headers: dict, api_url: s
 def execute_tc(row: dict) -> dict:
     api_url = row.pop("_api_url_", None)
     items_url_template = row.pop("_items_url_template_", "")
+    row.pop("_resource_name_", None)
     if not api_url:
         err_msg = get_msg("ERR_MISSING_API_URL")
         logger.error(err_msg)
@@ -360,9 +367,12 @@ def execute_tc(row: dict) -> dict:
             
             if not resp.ok:
                 resp_str = json.dumps(resp_body) if isinstance(resp_body, dict) else str(resp_body)
+                # Record what the API actually returned, regardless of pass/fail
+                actual_err_display = ", ".join(c for c in actual_codes if c) or resp_str
                 # PASS if (no code expected) OR (code in list) OR (code in body string)
                 if not expected_err or any(expected_err == c for c in actual_codes) or expected_err in resp_str.lower():
                     result[STATUS_FLD] = "PASS"
+                    result[ERR_FLD] = actual_err_display
                 else:
                     result[ERR_FLD] = f"Code mismatch: expected='{expected_err}' | actual='{actual_codes}'"
             else:
@@ -394,12 +404,28 @@ def run_tc(api_url: str, csv_url: str, metafunc, items_url_template: str = "") -
 
 
 def execute_and_record_test(tc_row, record_property):
+    resource_name = tc_row.get("_resource_name_", "")
     res = execute_tc(tc_row)
-    
-
 
     for field in OUTPUT_EXTRA:
         record_property(field, str(res.get(field, "")))
+
+    allure.dynamic.title(res.get("TC_ID", "TC"))
+    allure.dynamic.description(res.get("TC_Description", ""))
+    if resource_name:
+        allure.dynamic.feature(resource_name)
+
+    # Attached (not set as allure parameters) so this detail stays on the
+    # test's own page instead of being dumped into the Behaviors/Suites tree view.
+    details = "\n".join([
+        f"Test_Case_Description: {res.get('TC_Description', '')}",
+        f"Expected_Error: {res.get('Expected_Error_Code', '') or 'None (positive test)'}",
+        f"Actual_Error: {res.get(ERR_FLD, '')}",
+        f"HTTP_Status_Code: {res.get(HTTP_CODE_FLD, '')}",
+        f"Validation_Status: {res.get(VALID_STAT_FLD, '')}",
+    ])
+    allure.attach(details, name="Execution Details", attachment_type=allure.attachment_type.TEXT)
+
     if res[STATUS_FLD] != "PASS":
         pytest.fail(f"[{tc_row.get('TC_ID')}] {res.get(ERR_FLD)}", pytrace=False)
 

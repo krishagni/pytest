@@ -7,6 +7,7 @@ import threading
 import time
 from datetime import datetime
 
+import allure
 import requests
 from utilities import logger, BASE_URL, get_auth_headers, fetch_original_state, cleanup_or_revert_api_resource, \
     STATUS_FLD, HTTP_CODE_FLD, ERR_FLD, SEC_ASSERTION_FLD, REFL_INPUT_FLD
@@ -19,6 +20,10 @@ SECURITY_TC_DATA_DIR = os.getenv("SECURITY_TC_DATA_DIR", "security_tests/tc_data
 
 
 SECURITY_META_FIELDS  = json.loads(os.environ["SECURITY_META_FIELDS"])
+
+# Populated by conftest.pytest_generate_tests; maps a short cache key -> full row dict.
+# See OS_TC_ROWS in os_test_framework.py for why this indirection exists.
+SEC_TC_ROWS: dict[str, dict] = {}
 
 # ── Security Output Field Definitions (Centralized in utilities) ─────────────
 # All field names are imported from utilities to allow easy rename via .env
@@ -284,12 +289,12 @@ def execute_security_tc(row: dict) -> dict:
         result[STATUS_FLD]             = tc_status
         result[SEC_ASSERTION_FLD]    = assertion_msg
 
-        if tc_status == "FAIL":
-            try:
-                body_snippet = json.dumps(response.json())[:300]
-            except Exception:
-                body_snippet = (response.text or "")[:300]
-            result[ERR_DETAILS_FLD] = body_snippet
+        # Record what the API actually returned, regardless of pass/fail
+        try:
+            body_snippet = json.dumps(response.json())[:300]
+        except Exception:
+            body_snippet = (response.text or "")[:300]
+        result[ERR_DETAILS_FLD] = body_snippet
 
         # logger.info(f"[{tc_id}] {tc_status} -- {assertion_msg}")
 
@@ -318,6 +323,21 @@ def execute_and_record_security_test(row: dict, record_property):
 
     for field in SECURITY_OUTPUT_EXTRA:
         record_property(field, str(result.get(field, "")))
+
+    allure.dynamic.title(row.get("TC_ID", "TC"))
+    allure.dynamic.description(row.get("TC_Description", ""))
+    allure.dynamic.feature("Security")
+
+    # Attached (not set as allure parameters) so this detail stays on the
+    # test's own page instead of being dumped into the Behaviors/Suites tree view.
+    exec_details = "\n".join([
+        f"Test_Case_Description: {row.get('TC_Description', '')}",
+        f"Expected_Result: {row.get('Expected_Results', '')}",
+        f"Actual_Error: {result.get(ERR_DETAILS_FLD, '')}",
+        f"HTTP_Status_Code: {result.get(HTTP_CODE_FLD, '')}",
+        f"Security_Assertion: {result.get(SEC_ASSERTION_FLD, '')}",
+    ])
+    allure.attach(exec_details, name="Execution Details", attachment_type=allure.attachment_type.TEXT)
 
     if result[STATUS_FLD] != "PASS":
         tc_id   = row.get("TC_ID", "?")

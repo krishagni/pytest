@@ -1,9 +1,13 @@
+import os
+import shutil
 import pytest
 import logging
+import allure
 import os_test_framework
 import security_test_framework
 import utilities
-from utilities import STATUS_FLD, VALID_STAT_FLD, ERR_FLD, HTTP_CODE_FLD, SEC_ASSERTION_FLD
+from datetime import datetime
+from utilities import STATUS_FLD, VALID_STAT_FLD, ERR_FLD, HTTP_CODE_FLD, SEC_ASSERTION_FLD, BASE_URL
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +16,26 @@ def pytest_configure(config):
         "markers",
         "security: mark test as part of the OpenSpecimen Security Test Suite",
     )
+
+def pytest_sessionstart(session):
+    """
+    Populate the Allure results dir with environment.properties and
+    categories.json. Runs in sessionstart (after all plugins' pytest_configure
+    have run) so allure-pytest's --clean-alluredir has already wiped the
+    directory before we write into it.
+    """
+    alluredir = session.config.getoption("--alluredir", default=None)
+    if not alluredir:
+        return
+    os.makedirs(alluredir, exist_ok=True)
+
+    with open(os.path.join(alluredir, "environment.properties"), "w", encoding="utf-8") as f:
+        f.write(f"Base_URL={BASE_URL}\n")
+        f.write(f"Run_Timestamp={datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+
+    categories_src = os.path.join(os.path.dirname(__file__), "categories.json")
+    if os.path.exists(categories_src):
+        shutil.copy(categories_src, os.path.join(alluredir, "categories.json"))
 
 @pytest.fixture(scope="session", autouse=True)
 def global_session_setup():
@@ -25,23 +49,28 @@ def global_session_setup():
 
 def pytest_generate_tests(metafunc):
     # ── OS Test Framework Parametrization ──
+    # NOTE: we parametrize by a short cache-key string (not the full row dict).
+    # allure-pytest auto-captures every parametrize value as a test "parameter";
+    # passing the whole dict made that unreadable (huge blob in the report UI).
+    # The actual row is looked up from OS_TC_ROWS inside the test.
     if "os_tc_row" in metafunc.fixturenames:
         all_cases = []
         # get_resources will be defined in main.py or conftest
         from main import get_resources
         for resource in get_resources():
-             all_cases.extend(
-                 os_test_framework.run_tc(
-                     resource["api_url"], resource["csv_url"], metafunc,
-                     items_url_template=resource.get("validation_url", "")
-                 )
+             resource_cases = os_test_framework.run_tc(
+                 resource["api_url"], resource["csv_url"], metafunc,
+                 items_url_template=resource.get("validation_url", "")
              )
+             for tc in resource_cases:
+                 tc["_resource_name_"] = resource["resource_name"]
+             all_cases.extend(resource_cases)
         if all_cases:
-            metafunc.parametrize(
-                "os_tc_row",
-                all_cases,
-                ids=[f"{r.get('TC_ID', 'TC')}" for r in all_cases],
-            )
+            display_ids = [f"{r.get('TC_ID', 'TC')}" for r in all_cases]
+            cache_keys = [f"{tc_id}#{i}" for i, tc_id in enumerate(display_ids)]
+            for cache_key, row in zip(cache_keys, all_cases):
+                os_test_framework.OS_TC_ROWS[cache_key] = row
+            metafunc.parametrize("os_tc_row", cache_keys, ids=display_ids)
 
     # ── Security Test Framework Parametrization ──
     if "sec_tc_row" in metafunc.fixturenames:
@@ -60,11 +89,11 @@ def pytest_generate_tests(metafunc):
                 logger.warning("No security test cases found in the sheet.")
                 metafunc.parametrize("sec_tc_row", [], ids=[])
             else:
-                metafunc.parametrize(
-                    "sec_tc_row",
-                    cases,
-                    ids=[r.get("TC_ID", f"TC_{i}") for i, r in enumerate(cases)],
-                )
+                display_ids = [r.get("TC_ID", f"TC_{i}") for i, r in enumerate(cases)]
+                cache_keys = [f"{tc_id}#{i}" for i, tc_id in enumerate(display_ids)]
+                for cache_key, row in zip(cache_keys, cases):
+                    security_test_framework.SEC_TC_ROWS[cache_key] = row
+                metafunc.parametrize("sec_tc_row", cache_keys, ids=display_ids)
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):

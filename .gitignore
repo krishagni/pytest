@@ -10,6 +10,7 @@ security_tests/
 security_output_*.csv
 security_report.html
 allure-report/
+allure-results/
 .venv/
 venv/
 env/

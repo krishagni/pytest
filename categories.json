@@ -1,0 +1,31 @@
+[
+  {
+    "name": "Security Vulnerability",
+    "matchedStatuses": ["failed"],
+    "messageRegex": ".*SECURITY VULNERABILITY.*"
+  },
+  {
+    "name": "Error Code Mismatch",
+    "matchedStatuses": ["failed"],
+    "messageRegex": ".*Code mismatch:.*"
+  },
+  {
+    "name": "Field Validation Failure",
+    "matchedStatuses": ["failed"],
+    "messageRegex": ".*(expected='.*'\\s*\\|\\s*actual=|no matching item found in response).*"
+  },
+  {
+    "name": "Unexpected Server Error",
+    "matchedStatuses": ["failed"],
+    "messageRegex": ".*Failed HTTP 5\\d\\d.*"
+  },
+  {
+    "name": "Unexpected Success (Expected Failure)",
+    "matchedStatuses": ["failed"],
+    "messageRegex": ".*Expected fail but got HTTP 200.*"
+  },
+  {
+    "name": "Test Defects",
+    "matchedStatuses": ["broken"]
+  }
+]
