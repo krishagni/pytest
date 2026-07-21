@@ -235,15 +235,22 @@ def deep_validate(res_id: int, expected_payload: dict, headers: dict, api_url: s
             items_resp = requests.get(items_url, headers=headers, timeout=15)
             logger.warning(f"🔍 [DIAG] Sub-list fetch status: {items_resp.status_code}")
             if items_resp.ok:
-                segments = [s for s in effective_template.rstrip("/").split("/") if s and "{" not in s]
-                last_seg = segments[-1] if segments else "items"
+                fetched_list = items_resp.json()
+                # Identify which payload field this fetched sub-list belongs to by content,
+                # not by name: try it against every list-of-dicts field and keep whichever
+                # one matches cleanly (zero diffs).
+                candidates = [
+                    k for k, v in expected_payload.items()
+                    if isinstance(v, list) and v and isinstance(v[0], dict)
+                ]
                 matched_key = next(
-                    (k for k in expected_payload if k.lower().endswith(last_seg.lower())),
-                    last_seg
+                    (k for k in candidates if not compare_dicts(expected_payload[k], fetched_list)),
+                    None
                 )
-                resp_data[matched_key] = items_resp.json()
-                # logger.warning(f"🔍 [DIAG] Injected {len(items_resp.json())} items into key '{matched_key}'")
-                # logger.info(f"📦 Fetched sub-list '{matched_key}' from: {items_url}")
+                if matched_key:
+                    resp_data[matched_key] = fetched_list
+                else:
+                    logger.warning(f"🔍 [DIAG] Could not determine which field the fetched sub-resource data belongs to (candidates tried: {candidates})")
         else:
             # logger.warning(f"🔍 [DIAG] No items_url_template and no 'Items' key in payload — skipping sub-list fetch")
             pass
