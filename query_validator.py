@@ -5,7 +5,7 @@ import pandas as pd
 from utilities import logger
 
 # OpenSpecimen query export CSVs typically contain 3 rows of metadata before the header.
-SKIP_ROWS = 3
+SKIP_ROWS = 4
 
 def validate_export(df_ref: pd.DataFrame, df_export: pd.DataFrame) -> tuple[str, str]:
     """Compares the exported DataFrame to the reference DataFrame."""
