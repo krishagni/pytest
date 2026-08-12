@@ -11,6 +11,14 @@ from utilities import STATUS_FLD, VALID_STAT_FLD, ERR_FLD, HTTP_CODE_FLD, SEC_AS
 
 logger = logging.getLogger(__name__)
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--gid",
+        action="store",
+        default=None,
+        help="Filter and download only the sheet matching this GID or resource name",
+    )
+
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
@@ -54,10 +62,11 @@ def pytest_generate_tests(metafunc):
     # passing the whole dict made that unreadable (huge blob in the report UI).
     # The actual row is looked up from OS_TC_ROWS inside the test.
     if "os_tc_row" in metafunc.fixturenames:
+        target_gid = metafunc.config.getoption("--gid")
         all_cases = []
         # get_resources will be defined in main.py or conftest
         from main import get_resources
-        for resource in get_resources():
+        for resource in get_resources(gid=target_gid):
              resource_cases = os_test_framework.run_tc(
                  resource["api_url"], resource["csv_url"], metafunc,
                  items_url_template=resource.get("validation_url", "")

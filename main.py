@@ -20,7 +20,7 @@ _SUMMARY_EXPORT_URL = (
 
 # ── Registry loader ────────────────────────────────────────────────────────────
 
-def load_resource_registry() -> list[dict]:
+def load_resource_registry(target_gid: str | None = None) -> list[dict]:
     if not MASTER_GSHEET_ID:
         logger.critical("MASTER_GSHEET_ID is not set in .env — cannot load resource registry.")
         pytest.exit("MASTER_GSHEET_ID missing from .env")
@@ -49,6 +49,9 @@ def load_resource_registry() -> list[dict]:
             logger.warning(f"⚠️  Skipping row with missing api_path or gid: {row}")
             continue
 
+        if target_gid and str(target_gid).strip() not in (gid, name.lower(), name):
+            continue
+
         api_url = f"{BASE_URL}/{api_path}"
         csv_url = (
             f"https://docs.google.com/spreadsheets/d/{MASTER_GSHEET_ID}"
@@ -60,23 +63,28 @@ def load_resource_registry() -> list[dict]:
             "api_url": api_url,
             "csv_url": csv_url,
             "validation_url": items_url_template,
+            "gid": gid,
         })
         logger.info(f"✅  Registered resource '{name}': {api_url}" + (f" (items: {items_url_template})" if items_url_template else ""))
 
     if not registry:
-        logger.critical("No enabled resources found in the summary sheet.")
-        pytest.exit("Summary sheet has no enabled resources.")
+        if target_gid:
+            logger.critical(f"No enabled resources found matching GID/Name '{target_gid}' in the summary sheet.")
+            pytest.exit(f"Summary sheet has no resource matching GID/Name '{target_gid}'.")
+        else:
+            logger.critical("No enabled resources found in the summary sheet.")
+            pytest.exit("Summary sheet has no enabled resources.")
 
     return registry
 
-# ── Cached registry (loaded once per session) ──────────────────────────────────
-_RESOURCES: list[dict] | None = None
+# ── Cached registry (keyed by target_gid) ──────────────────────────────────────
+_RESOURCES_CACHE: dict[str, list[dict]] = {}
 
-def get_resources() -> list[dict]:
-    global _RESOURCES
-    if _RESOURCES is None:
-        _RESOURCES = load_resource_registry()
-    return _RESOURCES
+def get_resources(gid: str | None = None) -> list[dict]:
+    cache_key = str(gid).strip() if gid else "ALL"
+    if cache_key not in _RESOURCES_CACHE:
+        _RESOURCES_CACHE[cache_key] = load_resource_registry(target_gid=gid)
+    return _RESOURCES_CACHE[cache_key]
 
 
 # ── Tests ──────────────────────────────────────────────────────────────
