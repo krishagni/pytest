@@ -45,12 +45,48 @@ def pytest_sessionstart(session):
     if os.path.exists(categories_src):
         shutil.copy(categories_src, os.path.join(alluredir, "categories.json"))
 
+def _selected_gdrive_data_needs(session):
+    """
+    Inspect the already-collected & filtered test items (post -k/-m filtering)
+    to determine whether this run actually needs the security tc_data folder
+    and/or the query tc_data folder, so we don't pull both full Gdrive
+    folders for e.g. a single unrelated test case.
+    """
+    needs_security = False
+    needs_query = False
+
+    for item in session.items:
+        if not needs_security and item.get_closest_marker("security"):
+            needs_security = True
+
+        if not needs_query:
+            callspec = getattr(item, "callspec", None)
+            os_tc_key = callspec.params.get("os_tc_row") if callspec else None
+            if os_tc_key:
+                row = os_test_framework.OS_TC_ROWS.get(os_tc_key, {})
+                if str(row.get("File_info", "")).strip():
+                    needs_query = True
+
+        if needs_security and needs_query:
+            break
+
+    return needs_security, needs_query
+
 @pytest.fixture(scope="session", autouse=True)
-def global_session_setup():
+def global_session_setup(request):
     """Global setup and teardown for the entire test session."""
-    # logger.info("Test Suite -- session started")
-    utilities.download_tc_data_from_gdrive()
-    utilities.download_query_tc_data_from_gdrive()
+    needs_security, needs_query = _selected_gdrive_data_needs(request.session)
+
+    if needs_security:
+        utilities.download_tc_data_from_gdrive()
+    else:
+        logger.info("No security test cases selected -- skipping security tc_data Gdrive download.")
+
+    if needs_query:
+        utilities.download_query_tc_data_from_gdrive()
+    else:
+        logger.info("No selected test cases need query reference files -- skipping query tc_data Gdrive download.")
+
     yield
     # logger.info("Test Suite -- session ended")
     os_test_framework.cleanup_temp_data()
